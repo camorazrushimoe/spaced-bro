@@ -1,45 +1,46 @@
 # SpacedBro
 
-> Telegram-бот-компаньон для изучения языков с интервальным повторением (SRS).
-> Краткий, конкретный, в стиле «братишка, давай выучим это слово».
+> Telegram bot companion for language learning with spaced repetition (SRS).
+> Short, concrete, in the style of "bro, let's learn this word".
 
-**Репозиторий для спецификации и разработки.**  
-Мы используем [OpenSpec](https://github.com/Fission-AI/OpenSpec) — lightweight spec-driven development.
+**Repository for specification and development.**  
+We use [OpenSpec](https://github.com/Fission-AI/OpenSpec) — lightweight spec-driven development.
 
-## Идея продукта
+## Product Idea
 
-Пользователь кидает боту:
-- слово / фразу
-- кусок текста
-- голосовое
-- картинку (скрин, фото слова)
+The user sends the bot:
+- a word / phrase
+- a piece of text
+- a voice message
+- an image (screenshot, photo of a word)
 
-Бот понимает (явно или предлагает), что именно хочет запомнить, и добавляет в персональный словарь изучения.
+The bot understands (explicitly or by suggesting options) what exactly the user wants to remember and adds it to the personal learning dictionary.
 
-Потом по алгоритму интервального повторения возвращается к человеку в удобное время и упаковывает повторение в интересный формат:
-- пример в предложении
-- короткая фраза «как в фильме»
-- вопрос на понимание
-- мини-диалог
+Later, using the spaced repetition algorithm, it comes back to the user at a convenient time and packages the review in an interesting format:
+- example sentence
+- short "movie-style" phrase
+- comprehension question
+- mini-dialogue
 
-Бот учится паттернам общения пользователя (в какое время/дни он обычно пишет) и старается не беспокоить, когда неудобно.
+The bot learns the user's communication patterns (what time / days they usually write) and tries not to bother them when it's inconvenient.
 
-## Характер и тон
+## Character & Tone
 
-**Имя:** SpacedBro (рабочее, можно обсудить)
+**Name:** SpacedBro (working title, open for discussion)
 
-**Характер:**
-- Братишка-помощник, а не учитель
-- Краткий и конкретный (не размазывает)
-- Дружелюбный, поддерживающий, без пафоса
-- Может использовать лёгкий сленг / «давай», «окей», «лови»
-- Всегда предлагает действие кнопками, когда это уместно
+**Character:**
+- Bro-helper, not a teacher
+- Short and concrete (no fluff)
+- Friendly, supportive, no pathos
+- Can use light slang / "okay", "got it", "let's go"
+- Always offers actions via buttons when appropriate
 
-Пример тона:
-> «Ок, добавил *ubiquitous*. Хочешь сразу пример в предложении?»  
-> [Да, пример] [Позже]
+Example tone:
+> "Okay, added *ubiquitous*.  
+> Want an example sentence right away?"  
+> [Yes, example] [Later]
 
-## Высокоуровневая схема компонентов
+## High-level Component Diagram
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -50,17 +51,17 @@
 ┌─────────────────────────────────────────────────────────────┐
 │                  Telegram Gateway                            │
 │  (aiogram / python-telegram-bot)                             │
-│  • приём text / voice / photo                                │
-│  • inline-кнопки (да/нет, добавить, пример...)               │
-│  • отправка proactive-сообщений                              │
+│  • receive text / voice / photo                              │
+│  • inline buttons (yes/no, add, example...)                  │
+│  • send proactive messages                                   │
 └───────────┬───────────────────────────────┬─────────────────┘
             │                               │
             ▼                               ▼
 ┌───────────────────────┐       ┌──────────────────────────────┐
 │  Media Processors     │       │   Intent & Extraction (LLM)  │
-│  • STT (voice → text) │       │  • понять, что учить         │
-│  • Vision / OCR       │       │  • предложить кандидатов     │
-│                       │       │  • извлечь слово/фразу       │
+│  • STT (voice → text) │       │  • understand what to learn  │
+│  • Vision / OCR       │       │  • suggest candidates        │
+│                       │       │  • extract word/phrase       │
 └───────────┬───────────┘       └──────────────┬───────────────┘
             │                                  │
             └────────────────┬─────────────────┘
@@ -78,64 +79,66 @@
 │                                                             │
 │  ┌─────────────────────────────────────────────────────┐    │
 │  │         Conversation / Generation (LLM)             │    │
-│  │  • упаковать review в интересный формат             │    │
-│  │  • короткие ответы в характере SpacedBro            │    │
-│  │  • генерация примеров, вопросов, мини-диалогов      │    │
+│  │  • package review in an interesting format          │    │
+│  │  • short replies in SpacedBro character             │    │
+│  │  • generate examples, questions, mini-dialogues     │    │
 │  └─────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────┘
                              │
                              ▼
 ┌─────────────────────────────────────────────────────────────┐
 │              Scheduler / Proactive Layer                     │
-│  • анализ паттернов активности пользователя                  │
-│  • выбор удобного окна для review                            │
-│  • очередь сообщений                                         │
+│  • analyze user activity patterns                            │
+│  • choose convenient window for review                       │
+│  • message queue                                              │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## Технологический стек (предварительный)
+## Tech Stack (preliminary)
 
-- **Bot framework:** Python + aiogram 3.x (или python-telegram-bot)
-- **LLM:** OpenAI (GPT-4o-mini / GPT-4.1-mini) — баланс цена/качество. Токен будет у разработчиков.
-- **STT:** OpenAI Whisper / Telegram native / другой
-- **Vision:** GPT-4o vision или отдельный OCR
-- **Storage:** PostgreSQL (или SQLite на старте) + Redis (очереди, кэш)
-- **SRS:** классический SM-2 или упрощённый вариант (обсудим)
+- **Bot framework:** Python + aiogram 3.x (or python-telegram-bot)
+- **LLM:** OpenAI (GPT-4o-mini / GPT-4.1-mini) — good balance of price/quality. Token will be provided to developers.
+- **STT:** OpenAI Whisper / Telegram native / other
+- **Vision:** GPT-4o vision or separate OCR
+- **Storage:** PostgreSQL (or SQLite at the start) + Redis (queues, cache)
+- **SRS:** classic SM-2 or simplified version (to be discussed)
 - **Scheduler:** APScheduler / Celery / background tasks
 
-## Структура репозитория (планируемая)
+## Planned Repository Structure
 
 ```
 spaced-bro/
-├── README.md                 ← ты здесь
+├── README.md                 ← you are here
 ├── openspec/                 ← OpenSpec specs & changes
-│   ├── specs/                ← source of truth (поведение системы)
+│   ├── specs/                ← source of truth (system behavior)
 │   │   ├── telegram-bot/
 │   │   ├── srs-engine/
 │   │   ├── user-memory/
 │   │   ├── content-generation/
 │   │   └── media/
-│   ├── changes/              ← активные изменения
+│   ├── changes/              ← active changes
 │   └── config.yaml
-├── docs/                     ← дополнительные заметки, решения
-└── (позже) src/              ← код
+├── docs/                     ← additional notes, decisions
+└── (later) src/              ← code
 ```
 
-## Как мы работаем
+## How We Work
 
-1. Обсуждаем идею / фичу здесь (в чате с Grok) или в issues.
-2. Формируем change в `openspec/changes/` через OpenSpec-подход.
-3. Спецификация = требования (SHALL) + сценарии (WHEN/THEN).
-4. Потом инженеры реализуют по tasks.md.
+1. Discuss idea / feature here (in chat with Grok) or in issues.
+2. Form a change in `openspec/changes/` using the OpenSpec approach.
+3. Specification = requirements (SHALL) + scenarios (WHEN/THEN).
+4. Engineers implement according to `tasks.md`.
 
-## Текущий статус
+All updates to the repository go through Pull Requests.
 
-- [x] Репозиторий создан
-- [x] Высокоуровневая схема компонентов
-- [ ] Согласовать имя и характер
-- [ ] MVP scope (что входит в первую версию)
-- [ ] Первый change в OpenSpec (core interaction + add word)
+## Current Status
+
+- [x] Repository created
+- [x] High-level component diagram
+- [ ] Agree on name and character
+- [ ] Define MVP scope
+- [ ] First OpenSpec change (core interaction + add word)
 
 ---
 
-**Следующий шаг:** согласовать имя/характер и набросать первый change (MVP: принять слово → добавить в словарь → простой review).
+**Next step:** Agree on name/character and draft the first change (MVP: accept word → add to dictionary → simple review).
