@@ -1,34 +1,37 @@
 ## ADDED Requirements
 
 ### Requirement: Personal learning dictionary
-The system SHALL maintain a personal set of learning items for each user. Each item MUST have a `front` (word/phrase) and a `back` (translation, meaning, or short definition).
+The system SHALL maintain learning items per user with `front`, `back`, optional `context`, and SRS fields including `interval_minutes` and UTC `next_review_at`.
 
-#### Scenario: Add item
-- **WHEN** the user confirms addition of a candidate
-- **THEN** the system creates a learning item with initial SRS state and a `back` produced by a cheap LLM prompt
+### Requirement: Front normalization
+Uniqueness SHALL use `normalized_front = " ".join(front.casefold().split())`. Two fronts that normalize equal are the same item for that user.
 
-### Requirement: Fill back via LLM
-When adding an item, the system SHALL obtain `back` using a short, low-token LLM prompt (definition/translation), not leave it empty.
+#### Scenario: Case and spaces
+- **WHEN** the user adds `Hello` and later ` hello `
+- **THEN** the second is treated as a duplicate of the first
 
-### Requirement: Optional context
-The system SHALL allow storing optional context (sentence, note, image hint).
+### Requirement: Back in native language
+`back` SHALL be generated as a short translation or definition **in the user's `native_lang`** via a cheap one-line LLM prompt.
 
-### Requirement: Unique front per user
-For a given user, the system SHALL treat normalized `front` as unique.
+### Requirement: Confirm back before save
+The system SHALL show `front` and generated `back` and require explicit Save before persisting. The user MUST be able to reject and regenerate `back` or skip without saving.
 
-#### Scenario: Duplicate detected
-- **WHEN** the user tries to add an item whose front already exists in their dictionary
-- **THEN** the bot informs them it is already saved and offers to **boost** learning (reset SRS to a frequent schedule)
+#### Scenario: Save
+- **WHEN** the user taps Save after seeing `back`
+- **THEN** the card is stored with new SRS state
 
-### Requirement: Boost learning
-Boosting an existing item SHALL reset its SRS schedule to a short/frequent interval (as if newly added) without deleting the card or its `back`/context.
+#### Scenario: Reject back
+- **WHEN** the user indicates `back` is wrong
+- **THEN** the system regenerates `back` (or offers skip) and does not save until Save
 
-#### Scenario: Forgotten long-interval card
-- **WHEN** the user boosts an item that was on a long interval (e.g. ~90 days) because they no longer remember it
-- **THEN** the item returns to frequent review scheduling
+#### Scenario: Back LLM failure
+- **WHEN** `back` generation fails
+- **THEN** no card is saved; user sees a short error and can retry
 
-### Requirement: Query due items
-The system SHALL retrieve items due for review for a user at a given time.
+### Requirement: Duplicates and boost
+#### Scenario: Duplicate
+- **WHEN** normalized front already exists
+- **THEN** bot informs the user and offers Boost without creating a second row
 
-### Requirement: Update after review
-After a quality rating, the system SHALL update SRS fields according to the SRS engine rules.
+### Requirement: Due query
+Items with `next_review_at <= now_utc` are due, ordered by `next_review_at` ascending.

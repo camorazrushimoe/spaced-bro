@@ -1,67 +1,44 @@
 # Tasks: MVP Core — SpacedBro
 
 ## 1. Project setup
-- [ ] Initialize Python project (poetry / uv / requirements)
-- [ ] Add aiogram 3.x, OpenAI client (vision), SQLAlchemy/asyncpg, Redis client
-- [ ] Env vars only: `BOT_TOKEN`, `OPENAI_API_KEY`, `DATABASE_URL`, `REDIS_URL` (never commit secrets)
-- [ ] Structure: handlers, services, models, srs, llm, media, scheduler, profile
-- [ ] Logging + user-facing error helpers
-- [ ] Runtime choice: long polling **or** webhook; document how to run + optional Docker
+- [ ] Python project + aiogram 3.x + OpenAI client + SQLAlchemy/Alembic
+- [ ] Env: `BOT_TOKEN`, `OPENAI_API_KEY`, `DATABASE_URL` (sqlite)
+- [ ] **Dockerfile + compose.yml** (bot service, volume for SQLite, healthcheck)
+- [ ] Long polling entrypoint + in-process APScheduler
+- [ ] Injectable clock utility
 
-## 2. Database & models
-- [ ] Schema: users (target_lang, ui_lang, level_estimate, activity UTC fields), learning_items (unique front per user), optional activity_events
-- [ ] User repository: get_or_create, update activity, update level estimate, language change flow state
-- [ ] LearningItem repository: CRUD, due query, duplicate check (normalized front), boost/reset SRS
-- [ ] Migrations
+## 2. Database
+- [ ] SQLite schema: users (native_lang, target_lang, …), learning_items (normalized_front unique, interval_minutes)
+- [ ] Alembic migrations; migrate on deploy/start
+- [ ] Repositories: users, items, due query, duplicate check, boost, proactive counters
 
-## 3. LLM layer
-- [ ] Text extraction (structured candidates)
-- [ ] Image extraction (multimodal → same structure)
-- [ ] **Cheap `back` prompt** (one-line translation/definition, mini model)
-- [ ] Generation: confirm, example, review package, boost offer, language-change copy, friendly errors
-- [ ] Character + UI language adaptation in system prompt
-- [ ] Token/image usage logging
+## 3. LLM
+- [ ] Text extraction + non-learning empty path
+- [ ] Image extraction
+- [ ] Cheap `back` into native_lang
+- [ ] Copy: confirm, regenerate, boost, errors, voice reply
+- [ ] Optional soft per-user vision rate limit (default 20/hour)
 
-## 4. Telegram handlers
-- [ ] `/start` — welcome (English default), optional ask target language, invite first item
-- [ ] Text handler → extract → candidates + buttons
-- [ ] Photo handler → extract → same flow
-- [ ] Callbacks: Add / Skip / Boost / language confirm (double step) / review quality / Show answer / Example
-- [ ] Optional `/review` or NL review request
-- [ ] Voice → short "not supported yet"
-- [ ] Global error handler → short friendly message
+## 4. Handlers
+- [ ] `/start` + ask target language
+- [ ] Text / photo flows
+- [ ] Confirm-back Save / Regenerate / Skip
+- [ ] Callback idempotency
+- [ ] Duplicate + Boost
+- [ ] Review session with due count
+- [ ] Voice MUST short reply
+- [ ] Global friendly errors
 
-## 5. Core learning flow
-- [ ] Add item (fill `back` via cheap LLM)
-- [ ] Duplicate detection → notify + offer Boost
-- [ ] Boost resets SRS to frequent schedule
-- [ ] On-demand review + rating → update SRS
-- [ ] Simple list/status of items (optional command/button)
+## 5. SRS
+- [ ] Implement exact design §6 mapping
+- [ ] Unit tests with frozen clock (Again/Hard/Good/Easy, boost, cap)
 
-## 6. User profile & language
-- [ ] Default target_lang=`en`, UI English
-- [ ] Detect user message language; adapt bot language / mix per design rules
-- [ ] Double-confirmation flow to change target language (only one target at a time)
-- [ ] Level estimate update heuristics (item count + review quality)
+## 6. Scheduler
+- [ ] APScheduler job; UTC midnight cap; cold-start 09–21 UTC; 14-day back-off
+- [ ] Cap scaling 1/2/3; on-demand excluded
 
-## 7. SRS engine
-- [ ] Simplified SM-2 with documented defaults (new interval, quality mapping, growth, caps)
-- [ ] Boost/reset API
-- [ ] Unit tests for intervals and boost
+## 7. Polish
+- [ ] Logs/metrics; local README; smoke checklist including confirm-back, non-learning text, duplicate+boost, review session, proactive dry-run
 
-## 8. Scheduler / proactive
-- [ ] Job: due items + UTC activity window
-- [ ] Cap **1–3** proactive messages/day by activity
-- [ ] Back-off for inactive users
-
-## 9. Polish & observability
-- [ ] Consistent SpacedBro tone
-- [ ] Metrics/logs: messages, images, adds, duplicates, boosts, reviews, LLM errors
-- [ ] Local run README (no secrets in repo)
-- [ ] Smoke checklist: text add, image add, duplicate+boost, review, proactive dry-run, language change double confirm, error paths
-
-## Definition of Done (MVP)
-- Full loop works for text and image.
-- Profile stores target language + level signals; UI adapts; language change needs double confirm.
-- Duplicates offer boost; proactive ≤1–3/day; errors are short and clear.
-- Spec requirements satisfied; engineers can demo without secrets in git.
+## Definition of Done
+Happy path text+image with confirm-back; SRS unit tests green; compose up; secrets only in env; issue #3 blocking items addressed in spec.

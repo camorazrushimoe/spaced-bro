@@ -1,24 +1,26 @@
 ## ADDED Requirements
 
-### Requirement: Background scheduling
-The system SHALL run a background process that periodically identifies users with due learning items.
+### Requirement: In-process scheduler
+The system SHALL run proactive scheduling in-process (APScheduler) in the single bot process for MVP.
 
-### Requirement: UTC activity windows
-The system SHALL estimate convenient send windows using activity timestamps in **UTC** (hour-of-day histogram or equivalent). If data is insufficient, a conservative default UTC window MAY be used.
+### Requirement: UTC day boundary
+The proactive daily cap resets at **UTC midnight**. A "day" is a UTC calendar date.
 
-#### Scenario: Respect activity
-- **WHEN** selecting users for proactive messages
-- **THEN** the system favors UTC hours matching the user's past activity
+### Requirement: Cap 1–3 and exclusions
+Each user receives at most 1–3 proactive messages per UTC day per the activity scaling in design. **On-demand reviews do not count** toward this cap.
 
-### Requirement: Low daily volume
-The system SHALL send at most **1–3 proactive messages per user per day**, scaled by how active the user is (less active → fewer). It MUST NOT flood the user with many messages in a day.
+#### Scenario: Cap reached
+- **WHEN** proactive_count for today's UTC date is already at the user's limit
+- **THEN** no further proactive message is sent until the next UTC date
 
-#### Scenario: Daily cap
-- **WHEN** a user has already reached their daily proactive limit
-- **THEN** no further proactive review is sent until the next day
+### Requirement: Cold-start window
+If the user has no activity histogram, proactive sends are allowed only between **09:00 and 21:00 UTC**.
 
 ### Requirement: Back-off
-The system MUST back off when the user has been inactive for a long period.
+If `last_active_at` is older than **14 days**, the system SHALL skip proactive sends for that user.
 
-### Requirement: Non-spam behavior
-Proactive messages are a convenience aid, not a requirement to deliver every due card immediately.
+### Requirement: Unattended due items
+Due items not sent proactively remain due for on-demand review; no automatic discard.
+
+### Requirement: Single-instance
+MVP assumes one bot instance; no distributed lock is required. This SHALL be documented for operators.

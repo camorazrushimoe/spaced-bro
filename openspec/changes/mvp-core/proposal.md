@@ -6,61 +6,54 @@ We need a working Telegram companion bot that helps users learn a target languag
 
 This change defines the **MVP** that engineers can estimate and implement. It delivers the core loop:
 
-1. User sends a word / phrase / short text **or an image** (screenshot, photo of a word/phrase).
-2. Bot understands (or suggests) what to learn and adds it to the personal dictionary.
-3. Bot schedules and delivers reviews using spaced repetition, packaged in a short, interesting way.
-4. Bot stays brief, uses buttons for actions, adapts language to the user, and respects low message volume (1–3 proactive/day).
+1. User sends a word / phrase / short text **or an image**.
+2. Bot extracts candidates; on add, generates `back` in the user's **native language**, shows it for confirm/edit, then saves.
+3. Bot schedules and delivers reviews via fixed simplified SM-2 + boost.
+4. Bot stays brief, adapts language, and sends at most 1–3 **proactive** messages per UTC day.
 
 ## Scope (MVP)
 
 **In scope:**
-- Text messages (words, phrases, short text).
-- **Images / photos / screenshots** — multimodal LLM extracts candidate words/phrases.
-- Intent detection + candidate extraction via LLM (text and image).
-- Add / confirm learning items with inline buttons.
-- Personal learning dictionary per user (one target language at a time).
-- **User profile**: target language to learn, estimated proficiency level, activity patterns.
-- Bot UI language: default English; adapt when user writes in another language; mix or fully switch based on level.
-- Change of target language only with **double confirmation**.
-- SRS engine based on a simplified SM-2 algorithm + **boost/reset interval** when user re-encounters a forgotten long-interval card.
-- Duplicate handling: inform user item already exists; offer to boost learning (reset schedule).
-- Review delivery: on-demand + basic proactive messages (UTC activity heuristic).
-- Short responses in SpacedBro character + example sentences / simple packaging.
-- `back` (translation/meaning) filled by a **cheap LLM prompt** when adding.
-- Graceful, user-friendly error messages (LLM/API/image failures).
-- PostgreSQL + Redis (recommended), Python + aiogram 3.x + OpenAI (vision-capable, cost-efficient).
-- Runtime: long polling or webhook; single service + background scheduler; secrets via env (not in repo).
+- Text + images (vision LLM); voice deferred (short fixed reply if received).
+- Intent extraction; **non-learning text** → short ack, no card.
+- Add flow: candidates → generate `back` → **user confirms or rejects `back`** → save.
+- Personal dictionary; one `target_lang` at a time; `native_lang` for meanings.
+- Double confirmation to change `target_lang`.
+- Fixed simplified SM-2 table (all four qualities) + boost/reset.
+- Duplicates: notify + Boost; `front` normalized by a defined function.
+- Callback idempotency for Add/Boost.
+- On-demand review session (due count + one card at a time); unattended due cards simply remain due.
+- Proactive 1–3/day (UTC midnight reset); on-demand reviews do **not** count toward that cap.
+- **Stack (MVP):** Python + aiogram 3.x + **SQLite** + **in-process APScheduler** + OpenAI (vision). **Docker Compose required** for factory deploy (app service + persistent volume for SQLite). Redis/Postgres **not** required for MVP.
+- Injectable clock for tests; secrets via env only.
 
 **Out of scope for MVP (Phase 2+):**
-- Voice messages / STT.
-- Advanced ML-based activity models.
-- Learning multiple target languages in parallel.
-- Rich packaging (movie quotes, full mini-dialogues).
-- Streaks, gamification, analytics dashboard.
-- Web / mobile clients.
+- Voice/STT, Celery/multi-worker, Redis, Postgres (optional later upgrade).
+- Multi target languages in parallel, streaks, gamification, rich packaging, web clients.
 
 ## Success criteria
 
-- User can `/start`, set/confirm target language, send text or image, confirm addition (with translation from LLM), handle duplicates/boost, receive reviews (on-demand or proactive ≤1–3/day), rate them, and see SRS update.
-- Bot language adapts to user level and input language.
-- Replies stay short and actionable.
-- Spec is clear enough for estimation and implementation without major clarification rounds.
+- Full loop: text/image → confirm `back` → save → review → rate → SRS update; duplicate+boost; proactive ≤1–3/UTC day; non-learning text handled; unit-testable SRS with frozen clock.
 
 ## Decisions locked for MVP
 
 | Topic | Decision |
 |-------|----------|
 | Bot name | SpacedBro |
-| Bot UI language | Default English; adapt to user's language; mix/full target based on estimated level |
-| Target language | One at a time; stored in profile; change requires double confirmation |
-| Level tracking | Estimate from vocabulary size / review quality; aim to fully use target language when strong (e.g. 100+ solid items) |
-| Input channels | Text + Images (voice deferred) |
-| Translation (`back`) | Cheap LLM prompt on add |
-| Duplicates | Notify + offer boost (reset SRS to frequent reviews) |
-| Proactive volume | 1–3 messages/day depending on user activity; never flood |
-| Time windows | UTC-based activity heuristic |
-| SRS | Simplified SM-2 + boost/reset |
-| Errors | Short friendly message + retry invitation |
-| Runtime | Long polling or webhook; process + scheduler; secrets in env only |
-| LLM | OpenAI with vision, cost-efficient |
-| Stack | Python, aiogram 3.x, PostgreSQL, Redis recommended |
+| UI language | Default English; adapt/mix by input + level heuristics |
+| `native_lang` | Profile field; default `ru` (primary audience); used for `back` |
+| `target_lang` | One at a time; default `en`; change = double confirm |
+| `back` | Cheap LLM into `native_lang`; **show before save**; user can reject/regenerate |
+| Front normalize | `casefold` + strip + collapse internal whitespace |
+| SRS | Fixed interval ladder + ease rules below (see design/srs-engine) |
+| Qualities | Again / Hard / Good / Easy — all mapped |
+| Boost | Reset to new-item schedule; keep content |
+| Proactive | 1–3/UTC day; day = UTC midnight; on-demand excluded from cap |
+| Cold-start window | Default proactive hours 09:00–21:00 UTC if no history |
+| Back-off | No proactive if `last_active_at` older than 14 days |
+| Storage | **SQLite** (single file, volume in Compose) |
+| Scheduler | **In-process APScheduler**; single instance |
+| Deploy | **Docker Compose required**; long polling; healthcheck |
+| Migrations | SQLAlchemy + Alembic (works with SQLite) |
+| Time | All timestamps UTC; injectable clock for tests |
+| Secrets | Env only; owner provides out of band |

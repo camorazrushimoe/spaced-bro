@@ -1,65 +1,52 @@
 ## ADDED Requirements
 
 ### Requirement: Bot identity and tone
-The bot SHALL present itself as SpacedBro and communicate in a short, concrete, friendly "bro" style. It MUST avoid teacher-like, verbose, or formal language.
+The bot SHALL present as SpacedBro: short, concrete, friendly bro style; no teacher tone.
 
 ### Requirement: Default English UI with adaptation
-The bot SHALL default to English. It SHALL adapt or mix languages based on the user profile (input language and level estimate) per user-memory rules.
-
-#### Scenario: Short confirmation
-- **WHEN** the user successfully adds a word
-- **THEN** the bot replies with a brief confirmation and optional action buttons
+Default UI English; adapt/mix per profile heuristics in design.
 
 ### Requirement: Start command
-The bot SHALL respond to `/start` with a short welcome explaining the idea (text or images to learn; spaced reviews) and MAY ask what language the user wants to learn (default English).
-
-#### Scenario: First start
-- **WHEN** a user sends `/start` for the first time
-- **THEN** the bot creates a profile if needed and sends a short welcome + call to action
+`/start` SHALL welcome the user, create profile if needed, **ask target language once**, and invite the first word or photo.
 
 ### Requirement: Entry points
-The bot SHALL handle at least: `/start`, plain text, photos, callback queries, and an on-demand review path (natural language and/or `/review`).
+Handle `/start`, text, photo, callbacks, on-demand review (`/review` and/or natural language).
 
-### Requirement: Text message handling
-The bot SHALL accept text containing words, phrases, or short texts for learning.
+### Requirement: Non-learning text
+When text is not a learning request (greeting, thanks, off-topic chat),
+the bot SHALL reply briefly and point the user to send a word/photo or start a review — and MUST NOT create learning candidates.
 
-#### Scenario: Explicit single word
-- **WHEN** the user clearly requests to learn a word/phrase
-- **THEN** the bot extracts it and offers to add it (with buttons if needed)
+#### Scenario: Greeting
+- **WHEN** the user sends "hi" / "thanks"
+- **THEN** short ack without Add buttons for vocab candidates
 
-#### Scenario: Multi-item text
-- **WHEN** the user sends longer text
-- **THEN** the bot may suggest up to 1–3 candidates with Add/Skip buttons
+### Requirement: Learning text and images
+Extract up to 1–3 candidates with Add/Skip. Images via vision model; unusable image → short message.
 
-### Requirement: Image message handling
-The bot SHALL accept photos and extract candidates via a vision-capable model.
-
-#### Scenario: Useful photo
-- **WHEN** the image contains learnable text
-- **THEN** the bot proposes up to 1–3 candidates with buttons
-
-#### Scenario: Unusable image
-- **WHEN** nothing useful is found
-- **THEN** the bot replies briefly and invites another try
+### Requirement: Confirm back UI
+Before save, show generated `back` with Save / Regenerate / Skip.
 
 ### Requirement: Duplicate and boost UI
-When a candidate already exists, the bot SHALL say so and offer a Boost button (reset to frequent reviews).
+Existing item → notify + Boost button.
+
+### Requirement: Callback idempotency
+Processing the same Add/Boost/Save callback id more than once SHALL not create duplicate cards or double-apply boost.
+
+### Requirement: Review session
+On-demand review SHALL state how many items are due, then present one card at a time until the user stops or none remain.
+
+#### Scenario: Empty due
+- **WHEN** no items are due
+- **THEN** bot says so briefly
 
 ### Requirement: Inline buttons
-The bot SHALL use inline buttons for Add, Skip, Boost, language double-confirm, Show answer, example, and review quality.
-
-### Requirement: Review interaction
-The bot SHALL support interactive review (front → reveal back → quality rating → SRS update).
-
-#### Scenario: On-demand review
-- **WHEN** the user requests a review
-- **THEN** the bot presents a due item with rating/reveal buttons
+Add, Skip, Save back, Regenerate back, Boost, language double-confirm, Show answer, quality ratings.
 
 ### Requirement: Proactive reviews
-The bot SHALL be able to send proactive reviews within UTC activity windows subject to the 1–3 per day cap.
+Within UTC windows and 1–3/UTC-day cap per design.
 
 ### Requirement: Friendly errors
-On LLM/API failures or unexpected errors, the bot SHALL reply with a short, clear message (no technical details) and invite retry.
+LLM/API failures → short message, no stack trace, no partial save when add fails.
 
-### Requirement: Voice out of scope
-Voice MUST NOT be processed in MVP; the bot MAY say voice is not supported yet.
+### Requirement: Voice
+Voice messages MUST receive a short reply that voice is not supported yet; send text or photo.
