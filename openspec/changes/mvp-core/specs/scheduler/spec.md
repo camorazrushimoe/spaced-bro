@@ -3,19 +3,22 @@
 ### Requirement: Background scheduling
 The system SHALL run a background process that periodically identifies users with due learning items.
 
-### Requirement: Convenient windows
-The system SHALL prefer sending proactive reviews during times when the user has historically been active (derived from activity data). If insufficient data exists, a conservative default window MAY be used.
+### Requirement: UTC activity windows
+The system SHALL estimate convenient send windows using activity timestamps in **UTC** (hour-of-day histogram or equivalent). If data is insufficient, a conservative default UTC window MAY be used.
 
 #### Scenario: Respect activity
 - **WHEN** selecting users for proactive messages
-- **THEN** the system favors hours/days matching the user's past activity patterns
+- **THEN** the system favors UTC hours matching the user's past activity
 
-### Requirement: Rate limiting
-The system SHALL enforce a configurable maximum number of proactive review messages per user per day and MUST back off when the user has been inactive for a long period.
+### Requirement: Low daily volume
+The system SHALL send at most **1–3 proactive messages per user per day**, scaled by how active the user is (less active → fewer). It MUST NOT flood the user with many messages in a day.
 
-#### Scenario: Daily limit
-- **WHEN** a user has already received the maximum proactive messages today
-- **THEN** no further proactive review is sent until the next day (or limit reset)
+#### Scenario: Daily cap
+- **WHEN** a user has already reached their daily proactive limit
+- **THEN** no further proactive review is sent until the next day
+
+### Requirement: Back-off
+The system MUST back off when the user has been inactive for a long period.
 
 ### Requirement: Non-spam behavior
-The system MUST NOT flood the user. Proactive messages are a convenience, not a requirement for every due card at every moment.
+Proactive messages are a convenience aid, not a requirement to deliver every due card immediately.
