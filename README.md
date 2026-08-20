@@ -11,8 +11,8 @@ We use [OpenSpec](https://github.com/Fission-AI/OpenSpec) — lightweight spec-d
 The user sends the bot:
 - a word / phrase
 - a piece of text
-- a voice message
 - an image (screenshot, photo of a word)
+- a voice message (Phase 2)
 
 The bot understands (explicitly or by suggesting options) what exactly the user wants to remember and adds it to the personal learning dictionary.
 
@@ -46,21 +46,22 @@ Example tone:
 ┌─────────────────────────────────────────────────────────────┐
 │                     Telegram User                            │
 └───────────────────────────┬─────────────────────────────────┘
-                            │ messages / voice / photo / callbacks
+                            │ messages / photo / callbacks
+                            │ (voice → Phase 2)
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                  Telegram Gateway                            │
-│  (aiogram / python-telegram-bot)                             │
-│  • receive text / voice / photo                              │
+│  (aiogram)                                                   │
+│  • receive text / photo                                      │
 │  • inline buttons (yes/no, add, example...)                  │
 │  • send proactive messages                                   │
 └───────────┬───────────────────────────────┬─────────────────┘
             │                               │
             ▼                               ▼
 ┌───────────────────────┐       ┌──────────────────────────────┐
-│  Media Processors     │       │   Intent & Extraction (LLM)  │
-│  • STT (voice → text) │       │  • understand what to learn  │
-│  • Vision / OCR       │       │  • suggest candidates        │
+│  Media (Images)       │       │   Intent & Extraction (LLM)  │
+│  • Vision / multimodal│       │  • understand what to learn  │
+│                       │       │  • suggest candidates        │
 │                       │       │  • extract word/phrase       │
 └───────────┬───────────┘       └──────────────┬───────────────┘
             │                                  │
@@ -97,12 +98,12 @@ Example tone:
 ## Tech Stack (MVP)
 
 - **Bot framework:** Python + aiogram 3.x
-- **LLM:** OpenAI (GPT-4o-mini / similar cost-efficient model). Token will be provided to developers.
+- **LLM:** OpenAI with vision support (cost-efficient tier where possible). Token will be provided to developers.
 - **Storage:** PostgreSQL + Redis (recommended)
 - **SRS:** Simplified SM-2
 - **Scheduler:** Background jobs (APScheduler / Celery / equivalent)
-
-Voice and image processing are planned for Phase 2.
+- **Images:** Multimodal / vision model (in MVP)
+- **Voice:** Deferred to Phase 2
 
 ## Planned Repository Structure
 
@@ -135,7 +136,7 @@ spaced-bro/
 - [x] Repository created
 - [x] High-level component diagram
 - [x] Name and character locked (SpacedBro)
-- [x] MVP scope defined
+- [x] MVP scope defined (text + images; voice later)
 - [x] First OpenSpec change: `openspec/changes/mvp-core/`
   - proposal, design, tasks, and requirements for core domains
 
