@@ -6,151 +6,139 @@
 Telegram User
       │
       ▼
-Telegram Gateway (aiogram)
-  - message handlers (text, photo, callback_query)
+Telegram Gateway (aiogram, long polling)
+  - text / photo / callbacks
   - inline keyboards
-  - outgoing messages (reply + proactive)
       │
-      ├──► Media (Images)
-      │      download photo → multimodal LLM
-      │
+      ├──► Media (images → multimodal LLM)
       ├──► Intent & Extraction (LLM)
-      │      extracts candidates / intent from text or image
-      │
-      ├──► Conversation / Generation (LLM)
-      │      short bro-style replies, examples, language-adapted
+      ├──► Generation (LLM, language-aware)
+      ▼
+Core: User Profile · Learning Items · SRS Engine
       │
       ▼
-Core Services
-  ├── User Profile / Memory
-  ├── Learning Items (cards)
-  └── SRS Engine (+ boost/reset)
+In-process APScheduler (UTC) · proactive 1–3/day
       │
-      ▼
-Scheduler / Proactive Layer
-  - background jobs / queue
-  - UTC activity-window heuristics
-  - 1–3 proactive messages / day max
+SQLite (single file on volume)
 ```
 
-## Key components
+Single long-running process. No Redis/Celery in MVP.
 
-### 1. Telegram Gateway
-- Framework: **aiogram 3.x**
-- Handles: `/start`, plain text, photos, callback queries.
-- Entry points: `/start`, text, photo, optional `/review` or natural-language review request, callbacks for Add/Skip/Boost/Confirm language/rate quality.
-- All user-facing messages short; prefer buttons for actions.
-- Supports reply and proactive (bot-initiated) messages.
+## 1. Telegram Gateway
+- aiogram 3.x, **long polling** (simpler than webhook for MVP).
+- Entry: `/start`, text, photo, `/review` (optional) + NL review, callbacks.
+- **Callback idempotency:** each actionable callback carries a unique `callback_id` (or item_id + action + nonce). Processing the same id twice is a no-op (or re-sends the same short ack). Protects double-tap and Telegram redelivery.
+- Short replies; buttons for actions.
 
-### 2. Image handling (MVP)
-- User sends a photo → download → multimodal LLM.
-- Extract 1–3 candidate learning items → same confirmation path as text.
-- Prefer process-and-discard images (do not store permanently).
+## 2. Images
+- Download → multimodal LLM → 1–3 candidates → same add path as text.
+- Process-and-discard; do not store images permanently.
 
-### 3. Intent & Extraction (LLM)
-- Input: text or image.
-- Output: structured candidates (`front`, optional context).
-- On add: fill `back` via a **cheap, short translation/definition prompt** (mini model, minimal tokens).
-- Confirm before permanent add when ambiguous.
+## 3. Intent & extraction
+- Structured candidates: `front`, optional `context`.
+- **Non-learning text** (greeting, thanks, off-topic): short ack + hint to send a word/photo or `/review`. Do **not** create candidates.
+- Learning request (explicit or extractable vocab): candidates + buttons.
 
-### 4. User profile (client profile module)
-Store per `telegram_id`:
-- `target_lang` — the **only** language being learned (default: `en`). Change requires **double confirmation** (propose → confirm again).
-- `ui_lang` / detected communication language — default bot replies in **English**; if user consistently writes in another language, adapt replies to that language (or mix).
-- `level_estimate` — rough proficiency in target language (e.g. beginner / intermediate / advanced), updated from signals:
-  - number of items in dictionary (e.g. 100+ stable items → treat as strong)
-  - review quality over time (many Easy/Good at long intervals)
-  - whether user struggles in target-language UI
-- `created_at`, `last_active_at`, activity hour histogram in **UTC**
-- optional: `first_name`, `username`
+## 4. User profile
+Per `telegram_id`:
+- `native_lang` — language of explanations/`back` (default **`ru`**). Set at onboarding or default.
+- `target_lang` — only language being learned (default **`en`**). Change = **double confirmation**.
+- `ui_lang` / detected — default English UI; adapt/mix per heuristics.
+- `level_estimate` — beginner | intermediate | advanced (heuristic from item count + review quality).
+- `created_at`, `last_active_at` (UTC), `activity_hours_utc` (24-bucket counts).
+- `proactive_count_date` (UTC date) + `proactive_count` for daily cap.
 
-**Language adaptation rules:**
-1. Default UI language: English.
-2. If user writes in another language → bot may reply in that language or mix.
-3. As `level_estimate` rises, prefer more (or fully) target-language UI.
-4. If user struggles (failed reviews, asks for help in other language), allow mixing.
-5. Heuristic example: ~100+ solid items at C1-ish stability → fully target language for bot UI when reasonable.
+**Language rules (MVP, soft heuristics — not strict gates):**
+1. Default UI English.
+2. If user writes in another language → reply in that language or mix.
+3. Higher level → prefer more target-language UI.
+4. Struggles → allow mix.
+5. Example strong signal: ≥100 items and mostly Good/Easy → prefer full target UI.
 
-Onboarding: bot MAY ask once what language the user wants to learn; default English if skipped.
+Onboarding: **SHALL ask once** for target language (default English if skipped) and use default `native_lang=ru` unless user states otherwise later.
 
-### 5. Learning items
-- `front`, `back` (from cheap LLM), optional `context`, `language_pair`
-- SRS fields: ease, interval, repetitions, next_review_at, last_review_at, status
-- **Duplicates:** if `front` (normalized) already exists for user → do not create second card; reply that it is already in the dictionary and offer **Boost** (reset schedule as if newly added / short interval again).
+## 5. Learning items & add flow
+1. Candidate `front` (normalized).
+2. If duplicate → notify + **Boost** offer; do not create second row.
+3. Else cheap LLM: one-line `back` **into `native_lang`**.
+4. **Show `front` + `back` to user** with buttons: [Save] [Wrong — regenerate] [Skip].
+5. Only on Save → persist card with SRS new state.
 
-### 6. SRS Engine (simplified SM-2 + boost)
-Suggested defaults (tunable):
-- New card: first review in ~10–30 minutes (or next convenient window).
-- Qualities: Again / Hard / Good / Easy.
-- Again → short interval (minutes–hours), reset or reduce repetitions.
-- Good/Easy → increase interval (e.g. 1d → 3d → 7d → 14d → 30d → 90d… with ease factor).
-- Cap max interval (e.g. 180 days) if desired.
+**Front normalization (exact):**
+```
+normalized = " ".join(front.casefold().split())
+```
+Unique per (`user_id`, `normalized_front`).
 
-**Boost (speed up learning):**
-- When user hits a duplicate or explicitly boosts a forgotten card (e.g. was on 90-day interval and does not remember):
-  - Reset to "new/learning" short interval schedule (as if just added).
-  - Keep the same card identity and `back`/context.
+**SRS fields:** `ease` (float), `interval_minutes` (int — supports sub-day), `repetitions` (int), `next_review_at` (UTC), `last_review_at`, `status`.
 
-### 7. Conversation / Generation (LLM)
-- System prompt: SpacedBro tone + current `ui_lang` / mix policy + target language.
-- Tasks: confirm add, example sentence, review packaging, show answer, language-change confirmation, boost offer, friendly errors.
-- Keep replies ≤2–3 short sentences + buttons.
-- Translation prompt for `back`: minimal — "Give a short definition/translation of {front} into {user_native_or_ui} for a language learner. One line only."
+Do **not** use `interval_days` as the sole interval unit.
 
-### 8. Scheduler / Proactive
-- Background worker (APScheduler / Celery / Redis queue).
-- Activity windows in **UTC** from past message hours; if little data, use a conservative default UTC window.
-- **Hard cap: 1–3 proactive messages per user per day**, scaled by activity (less active → closer to 1).
-- Back off if user inactive for a long time.
-- Never send 10+ messages/day.
+## 6. SRS Engine — fixed mapping (deterministic)
 
-### 9. Errors (user-facing)
-Keep it simple and clear:
-- LLM / API timeout or failure → "Something glitched on my side. Try again in a bit."
-- Unreadable image → "Couldn't pull any words from that photo. Try a clearer shot."
-- Voice message → "Voice isn't supported yet — send text or a photo."
-- Generic unexpected → short apology + invite retry.
-No stack traces to the user.
+**Clock:** all computations take an injected `now: datetime` (UTC). Production uses real UTC now; tests freeze the clock.
 
-### 10. Runtime & ops
-- **Recommended:** one long-running process (aiogram long polling) + in-process or sidecar scheduler; **or** webhook + worker.
-- Docker optional but useful for factory deploy.
-- Secrets (`BOT_TOKEN`, `OPENAI_API_KEY`, `DATABASE_URL`, `REDIS_URL`) **only via environment / secret store — never commit to git**.
-- Product owner provides tokens to developers out of band.
+**New / Boost state:**
+- `repetitions = 0`
+- `ease = 2.5`
+- `interval_minutes = 20`
+- `next_review_at = now + 20 minutes`
+- `status = learning`
+
+**Quality → update** (after reveal/rate):
+
+| Quality | Effect |
+|---------|--------|
+| **Again** | `repetitions = 0`; `interval_minutes = 10`; `ease = max(1.3, ease - 0.2)`; `status = learning` |
+| **Hard** | `interval_minutes = max(10, int(interval_minutes * 1.2))`; `ease = max(1.3, ease - 0.15)`; `repetitions += 1` |
+| **Good** | if `repetitions == 0`: `interval_minutes = 1440` (1 day); elif `repetitions == 1`: `interval_minutes = 4320` (3 days); else: `interval_minutes = int(interval_minutes * ease)`; `ease` unchanged; `repetitions += 1`; `status = review` when interval ≥ 1440 |
+| **Easy** | same as Good but `interval_minutes = int(interval_minutes * ease * 1.3)` after the first two steps; `ease = ease + 0.15` |
+
+**Max interval:** `interval_minutes` capped at **259200** (180 days).
+
+**Boost:** set state equal to New / Boost state above; keep `front`/`back`/`context`.
+
+Pure function: `(state, quality, now) → new_state`. Unit-test without Telegram/LLM.
+
+## 7. Review session & backlog
+- On-demand `/review` or NL: bot reports **how many due** (`next_review_at <= now`), then presents **one** card at a time (front → show answer → quality).
+- After rating, offer next due or stop.
+- **Unattended due cards:** remain due; no extra penalty. Proactive may surface up to daily cap; rest wait for on-demand or later days.
+- Proactive and on-demand share the same due queue; proactive does not remove the need for on-demand when backlog > cap.
+
+## 8. Scheduler / proactive
+- **In-process APScheduler** in the same process as the bot (single instance).
+- Job every N minutes: find users with due items, in window, under cap.
+- **Day** = calendar UTC date (reset at **UTC midnight**).
+- Cap: **1** if low activity, **2** medium, **3** high (simple: 0 messages in last 7 days → 1; else if active ≥3 distinct UTC hours in last 7 days → 3; else 2).
+- **On-demand reviews do not increment** proactive_count.
+- **Cold start (no histogram):** allow proactive only in **09:00–21:00 UTC**.
+- **Back-off:** if `last_active_at` < now - 14 days → skip proactive.
+- Document single-instance assumption (no distributed lock in MVP).
+
+## 9. Errors (user-facing)
+- LLM/API failure → short retry message; **do not** save card if `back` generation failed.
+- Bad JSON from LLM → short retry; no partial card.
+- Unreadable image → short message.
+- Voice → **MUST** reply: voice not supported yet; send text or photo.
+- No stack traces to users.
+
+## 10. Runtime & ops
+- **Docker Compose required** for factory: service `bot` + named volume for SQLite file.
+- Long polling; **HEALTHCHECK** (e.g. process up + SQLite openable, or HTTP `/healthz` if a tiny health server is added).
+- Env: `BOT_TOKEN`, `OPENAI_API_KEY`, `DATABASE_URL` (e.g. `sqlite:////data/spacedbro.db`).
+- **Alembic** migrations; apply on startup or explicit migrate step before traffic.
+- Postgres/Redis: out of MVP; upgrade path later if multi-instance needed.
 
 ## Data model (sketch)
 
-**users**
-- telegram_id (PK)
-- username, first_name (optional)
-- target_lang (default `en`)
-- ui_lang / detected_lang
-- level_estimate
-- created_at, last_active_at
-- activity_hours_utc (json or derived)
-- proactive_sent_today / last_proactive_date
+**users:** telegram_id, native_lang, target_lang, ui_lang, level_estimate, created_at, last_active_at, activity_hours_utc, proactive_count, proactive_count_date
 
-**learning_items**
-- id, user_id
-- front (unique per user, normalized)
-- back, context
-- ease, interval_days, repetitions
-- next_review_at, last_review_at, status
-- created_at
+**learning_items:** id, user_id, front, normalized_front, back, context, ease, interval_minutes, repetitions, next_review_at, last_review_at, status, created_at; UNIQUE(user_id, normalized_front)
 
-**activity_events** (optional)
-- user_id, event_type, created_at (UTC)
-
-## LLM usage guidelines
-- Structured output for extraction.
-- Mini-class model for translation/`back` and short replies.
-- Vision model only for images; resize if needed.
-- Log token usage; avoid long chat history in prompts.
-
-## Security & privacy
-- Minimal PII; no sharing across users.
-- Images not stored permanently by default.
-- Secrets outside the repository.
+## LLM guidelines
+- Mini model for `back` and short copy; vision only for images.
+- Soft per-user rate limit recommended (e.g. max N vision calls/hour) — implement as simple counter; exact N configurable (default 20).
 
 ## Non-goals
-- Voice/STT, multi-target languages in parallel, Anki import, full dashboard.
+Voice/STT, multi-worker Celery, multi target languages, Anki import, full dashboard.
