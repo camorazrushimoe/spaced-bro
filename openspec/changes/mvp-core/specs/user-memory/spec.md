@@ -1,42 +1,31 @@
 ## ADDED Requirements
 
 ### Requirement: User profile
-The system SHALL maintain a profile per Telegram user (`telegram_id`) including creation time, last activity, target learning language, UI/communication language signals, and a rough level estimate.
+The system SHALL store per Telegram user at least: `native_lang`, `target_lang`, UI/detected language signals, `level_estimate`, UTC activity fields, proactive daily counters.
 
 #### Scenario: First interaction
-- **WHEN** a user messages the bot for the first time
-- **THEN** the system creates a profile with defaults: target language English, UI oriented to English
+- **WHEN** a user first messages the bot
+- **THEN** a profile is created with `native_lang` default `ru`, `target_lang` default `en`
+
+### Requirement: Native language
+`native_lang` SHALL be the language used for card `back` (meanings/translations). Default `ru` for MVP primary audience.
 
 ### Requirement: Single target language
-The user SHALL learn only one target language at a time. The profile MUST store that language.
+Only one `target_lang` at a time. Change requires double confirmation (propose → confirm → confirm again).
 
-#### Scenario: Default target
-- **WHEN** a new profile is created
-- **THEN** target language is English unless the user selects another during onboarding
+#### Scenario: Double confirm applies
+- **WHEN** the user completes both confirmations
+- **THEN** `target_lang` updates
 
-### Requirement: Change target language with double confirmation
-Changing the target language SHALL require two explicit confirmations (propose change → user confirms → bot asks again → user confirms).
+#### Scenario: Single confirm insufficient
+- **WHEN** the user confirms only once
+- **THEN** `target_lang` is unchanged
 
-#### Scenario: Double confirm
-- **WHEN** the user requests to change the language they are learning
-- **THEN** the bot asks for confirmation twice before applying the change
+### Requirement: Onboarding question
+On `/start` for a new user, the bot SHALL ask once which language they want to learn (default English if skipped).
 
-### Requirement: UI language adaptation
-The bot SHALL default to English UI. If the user writes in another language, the bot MAY adapt or mix languages. As the estimated level in the target language increases, the bot SHOULD prefer more (or fully) target-language communication. If the user struggles, the bot MAY mix languages.
-
-#### Scenario: Strong learner
-- **WHEN** the user has a large stable vocabulary (e.g. on the order of 100+ solid items) and strong review performance
-- **THEN** the bot SHOULD communicate primarily in the target language
-
-### Requirement: Level estimate
-The system SHALL maintain a rough level estimate derived from signals such as dictionary size and review quality, and use it to adapt communication.
-
-### Requirement: Activity tracking (UTC)
-The system SHALL record activity timestamps in UTC (and preferably hour-of-day signals) for proactive scheduling.
-
-#### Scenario: Update on message
-- **WHEN** the user sends any message
-- **THEN** last activity and UTC activity signals are updated
+### Requirement: Activity UTC
+Activity timestamps and histograms SHALL use UTC.
 
 ### Requirement: Privacy
-The system SHALL store only the minimum data needed and MUST NOT share one user's data with other users.
+Store only minimum data; no cross-user sharing.
