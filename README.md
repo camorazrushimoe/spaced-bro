@@ -11,8 +11,8 @@ We use [OpenSpec](https://github.com/Fission-AI/OpenSpec) — lightweight spec-d
 The user sends the bot:
 - a word / phrase
 - a piece of text
-- a voice message
 - an image (screenshot, photo of a word)
+- a voice message (Phase 2)
 
 The bot understands (explicitly or by suggesting options) what exactly the user wants to remember and adds it to the personal learning dictionary.
 
@@ -26,7 +26,7 @@ The bot learns the user's communication patterns (what time / days they usually 
 
 ## Character & Tone
 
-**Name:** SpacedBro (working title, open for discussion)
+**Name:** SpacedBro
 
 **Character:**
 - Bro-helper, not a teacher
@@ -46,21 +46,22 @@ Example tone:
 ┌─────────────────────────────────────────────────────────────┐
 │                     Telegram User                            │
 └───────────────────────────┬─────────────────────────────────┘
-                            │ messages / voice / photo / callbacks
+                            │ messages / photo / callbacks
+                            │ (voice → Phase 2)
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                  Telegram Gateway                            │
-│  (aiogram / python-telegram-bot)                             │
-│  • receive text / voice / photo                              │
+│  (aiogram)                                                   │
+│  • receive text / photo                                      │
 │  • inline buttons (yes/no, add, example...)                  │
 │  • send proactive messages                                   │
 └───────────┬───────────────────────────────┬─────────────────┘
             │                               │
             ▼                               ▼
 ┌───────────────────────┐       ┌──────────────────────────────┐
-│  Media Processors     │       │   Intent & Extraction (LLM)  │
-│  • STT (voice → text) │       │  • understand what to learn  │
-│  • Vision / OCR       │       │  • suggest candidates        │
+│  Media (Images)       │       │   Intent & Extraction (LLM)  │
+│  • Vision / multimodal│       │  • understand what to learn  │
+│                       │       │  • suggest candidates        │
 │                       │       │  • extract word/phrase       │
 └───────────┬───────────┘       └──────────────┬───────────────┘
             │                                  │
@@ -94,51 +95,53 @@ Example tone:
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## Tech Stack (preliminary)
+## Tech Stack (MVP)
 
-- **Bot framework:** Python + aiogram 3.x (or python-telegram-bot)
-- **LLM:** OpenAI (GPT-4o-mini / GPT-4.1-mini) — good balance of price/quality. Token will be provided to developers.
-- **STT:** OpenAI Whisper / Telegram native / other
-- **Vision:** GPT-4o vision or separate OCR
-- **Storage:** PostgreSQL (or SQLite at the start) + Redis (queues, cache)
-- **SRS:** classic SM-2 or simplified version (to be discussed)
-- **Scheduler:** APScheduler / Celery / background tasks
+- **Bot framework:** Python + aiogram 3.x
+- **LLM:** OpenAI with vision support (cost-efficient tier where possible). Token will be provided to developers.
+- **Storage:** PostgreSQL + Redis (recommended)
+- **SRS:** Simplified SM-2
+- **Scheduler:** Background jobs (APScheduler / Celery / equivalent)
+- **Images:** Multimodal / vision model (in MVP)
+- **Voice:** Deferred to Phase 2
 
 ## Planned Repository Structure
 
 ```
 spaced-bro/
-├── README.md                 ← you are here
-├── openspec/                 ← OpenSpec specs & changes
-│   ├── specs/                ← source of truth (system behavior)
-│   │   ├── telegram-bot/
-│   │   ├── srs-engine/
-│   │   ├── user-memory/
-│   │   ├── content-generation/
-│   │   └── media/
-│   ├── changes/              ← active changes
+├── README.md
+├── openspec/
+│   ├── specs/                  # source of truth (after archive)
+│   ├── changes/
+│   │   └── mvp-core/           # current active change
+│   │       ├── proposal.md
+│   │       ├── design.md
+│   │       ├── tasks.md
+│   │       └── specs/
 │   └── config.yaml
-├── docs/                     ← additional notes, decisions
-└── (later) src/              ← code
+├── docs/
+└── (later) src/
 ```
 
 ## How We Work
 
-1. Discuss idea / feature here (in chat with Grok) or in issues.
+1. Discuss idea / feature in chat or issues.
 2. Form a change in `openspec/changes/` using the OpenSpec approach.
 3. Specification = requirements (SHALL) + scenarios (WHEN/THEN).
 4. Engineers implement according to `tasks.md`.
-
-All updates to the repository go through Pull Requests.
+5. All updates go through Pull Requests.
 
 ## Current Status
 
 - [x] Repository created
 - [x] High-level component diagram
-- [ ] Agree on name and character
-- [ ] Define MVP scope
-- [ ] First OpenSpec change (core interaction + add word)
+- [x] Name and character locked (SpacedBro)
+- [x] MVP scope defined (text + images; voice later)
+- [x] First OpenSpec change: `openspec/changes/mvp-core/`
+  - proposal, design, tasks, and requirements for core domains
+
+**Hand-off ready:** The `mvp-core` change is the specification package for engineers to estimate and implement.
 
 ---
 
-**Next step:** Agree on name/character and draft the first change (MVP: accept word → add to dictionary → simple review).
+See `openspec/changes/mvp-core/` for the full MVP specification.
