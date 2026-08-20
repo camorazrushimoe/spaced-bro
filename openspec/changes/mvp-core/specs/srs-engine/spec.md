@@ -1,39 +1,41 @@
 ## ADDED Requirements
 
-### Requirement: Simplified SM-2 algorithm
-The system SHALL implement a simplified SM-2 spaced repetition algorithm with documented default intervals and quality mapping.
-
-Suggested defaults (tunable in config):
-- New item → first review in ~10–30 minutes (or next convenient window)
-- Qualities: Again / Hard / Good / Easy
-- Again → short interval (minutes–hours)
-- Good/Easy → growing intervals (e.g. days → weeks → ~90 days and beyond)
-- Optional max interval cap (e.g. 180 days)
+### Requirement: Deterministic simplified SM-2
+The system SHALL implement the exact mapping defined in `design.md` §6 (new state, Again/Hard/Good/Easy, max interval 180 days, boost = new state). Given `(state, quality, now_utc)`, the next state SHALL be fully determined with no optional branches.
 
 #### Scenario: New item
-- **WHEN** a new learning item is created
-- **THEN** it is scheduled for an initial short-interval review
+- **WHEN** a new item is created at time T
+- **THEN** `interval_minutes = 20`, `ease = 2.5`, `repetitions = 0`, `next_review_at = T + 20 minutes`
 
-#### Scenario: Successful review
-- **WHEN** the user rates Good or Easy
-- **THEN** interval and ease increase per SM-2 rules
-
-#### Scenario: Failed review
+#### Scenario: Again
 - **WHEN** the user rates Again
-- **THEN** the item returns to a short interval / learning state
+- **THEN** `repetitions = 0`, `interval_minutes = 10`, ease decreases by 0.2 but not below 1.3, `next_review_at = now + 10 minutes`
 
-### Requirement: Boost / reset schedule
-The system SHALL support resetting an item's SRS state to a frequent "new/learning" schedule (boost) while preserving card content.
+#### Scenario: Hard
+- **WHEN** the user rates Hard
+- **THEN** interval becomes `max(10, int(interval_minutes * 1.2))`, ease decreases by 0.15 but not below 1.3, repetitions increment by 1
 
-#### Scenario: Boost applied
-- **WHEN** boost is confirmed for an item
-- **THEN** next reviews are scheduled as for a newly added item
+#### Scenario: Good first success
+- **WHEN** repetitions is 0 and user rates Good
+- **THEN** `interval_minutes = 1440`, repetitions become 1
 
-### Requirement: Quality ratings
-The system SHALL accept at least Again / Hard / Good / Easy (or a documented simpler mapping).
+#### Scenario: Easy increases ease
+- **WHEN** the user rates Easy
+- **THEN** interval grows faster than Good (per design formula) and ease increases by 0.15
 
-### Requirement: Deterministic next review
-Given state + quality (or boost), the engine SHALL deterministically compute the next interval and timestamp.
+#### Scenario: Cap
+- **WHEN** computed interval would exceed 259200 minutes
+- **THEN** interval is set to 259200
+
+### Requirement: Boost
+Boost SHALL set SRS fields equal to the new-item state while preserving front/back/context.
+
+#### Scenario: Boost from long interval
+- **WHEN** an item with a multi-day interval is boosted at time T
+- **THEN** it matches new-item state at T
+
+### Requirement: Injectable clock
+SRS and scheduling logic SHALL accept an injectable UTC clock so tests can freeze time. Production uses real UTC.
 
 ### Requirement: Testability
-SRS calculations SHALL be unit-testable without Telegram or LLM.
+SRS calculations SHALL be unit-testable without Telegram, LLM, or a real wall clock.
