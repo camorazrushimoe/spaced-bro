@@ -3,7 +3,7 @@
 ### Requirement: SpacedBro character in all generated text
 All LLM-generated user-facing text SHALL follow the SpacedBro character: short, concrete, friendly bro style, no teacher tone, minimal fluff.
 
-### Requirement: Intent extraction
+### Requirement: Intent extraction from text
 The system SHALL use an LLM to extract learning intent and candidate items (word or short phrase + optional translation/context) from user text.
 
 #### Scenario: Explicit request
@@ -13,6 +13,17 @@ The system SHALL use an LLM to extract learning intent and candidate items (word
 #### Scenario: Suggestion from text
 - **WHEN** the user sends a longer text without explicit instruction
 - **THEN** the extractor may propose a small number of useful candidates for confirmation
+
+### Requirement: Intent extraction from images
+The system SHALL use a vision-capable model to extract candidate learning items from user-uploaded images (screenshots, photos of text, etc.).
+
+#### Scenario: Image with useful text
+- **WHEN** the user sends an image containing English words or phrases suitable for learning
+- **THEN** the extractor returns a small set of candidates (word/phrase + optional context) in the same structure as text extraction
+
+#### Scenario: No useful text
+- **WHEN** the image contains no extractable learning candidates
+- **THEN** the system signals that nothing useful was found so the bot can reply briefly
 
 ### Requirement: Example generation
 The system SHALL be able to generate a short example sentence that uses the target word/phrase naturally.
