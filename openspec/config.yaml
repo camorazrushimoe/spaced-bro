@@ -4,20 +4,21 @@ schema: spec-driven
 
 context: |
   Product: SpacedBro — Telegram bot companion for language learning with spaced repetition (SRS).
-  Primary language of learning: English (for Russian-speaking users initially).
-  Tone: short, concrete, friendly "bro" (братишка) style. Never teacher-like or verbose.
+  Primary language of learning: English (initially targeted at Russian-speaking users).
+  Tone: short, concrete, friendly "bro" style. Never teacher-like or verbose.
   Tech stack (tentative):
     - Python + aiogram 3.x
     - OpenAI GPT-4o-mini / similar (cost-efficient)
     - PostgreSQL + Redis
     - SM-2 or simplified SRS
   Key principles:
-    - Minimal user memory (only what's needed for good experience)
+    - Minimal user memory (only what's needed for a good experience)
     - Always prefer buttons for clear actions
-    - Proactive reviews only in user-convenient windows (learned from activity)
+    - Proactive reviews only in user-convenient windows (learned from activity patterns)
     - Interesting packaging of reviews (examples, movie-style phrases, mini-questions)
 
 rules:
-  - Keep responses of the bot short and actionable
+  - Keep bot responses short and actionable
   - Specs describe observable behavior (SHALL/MUST), not implementation details
-  - Prefer Russian for internal docs/comments if team is RU, but code/comments English
+  - All documentation and specs in English
+  - Code and code comments in English
