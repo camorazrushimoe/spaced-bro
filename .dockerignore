@@ -1,0 +1,25 @@
+# Version control
+.git
+.gitignore
+
+# Python
+.venv
+venv
+__pycache__
+*.py[cod]
+*.egg-info
+.pytest_cache
+.mypy_cache
+.ruff_cache
+build
+dist
+
+# Secrets — never bake into the image
+.env
+
+# Local databases
+*.db
+*.sqlite3
+
+# Tests (not needed in the runtime image)
+tests
