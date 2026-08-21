@@ -8,9 +8,9 @@
 - [x] Injectable clock utility
 
 ## 2. Database
-- [ ] SQLite schema: users (native_lang, target_lang, …), learning_items (normalized_front unique, interval_minutes)
+- [x] SQLite schema: users (native_lang, target_lang, …), learning_items (normalized_front unique, interval_minutes)
 - [x] Alembic migrations; migrate on deploy/start
-- [ ] Repositories: users, items, due query, duplicate check, boost, proactive counters
+- [x] Repositories: users, items, due query, duplicate check, boost, proactive counters
 
 ## 3. LLM
 - [ ] Text extraction + non-learning empty path
