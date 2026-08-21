@@ -99,9 +99,9 @@ Example tone:
 
 - **Bot framework:** Python + aiogram 3.x
 - **LLM:** OpenAI with vision support (cost-efficient tier where possible). Token will be provided to developers.
-- **Storage:** PostgreSQL + Redis (recommended)
+- **Storage:** SQLite (single file on a Docker Compose named volume). PostgreSQL/Redis not required for MVP.
 - **SRS:** Simplified SM-2
-- **Scheduler:** Background jobs (APScheduler / Celery / equivalent)
+- **Scheduler:** In-process APScheduler (single instance, same process as the bot)
 - **Images:** Multimodal / vision model (in MVP)
 - **Voice:** Deferred to Phase 2
 
