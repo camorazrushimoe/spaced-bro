@@ -1,0 +1,22 @@
+services:
+  bot:
+    build: .
+    image: spacedbro:latest
+    environment:
+      # Secrets are supplied out of band via a local .env file (gitignored);
+      # compose substitutes ${VAR} from the shell or the .env file.
+      BOT_TOKEN: ${BOT_TOKEN}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      # SQLite lives on the named volume at /data.
+      DATABASE_URL: sqlite:////data/spacedbro.db
+      HEALTH_HOST: 0.0.0.0
+      HEALTH_PORT: "8080"
+    volumes:
+      - spacedbro-data:/data
+    ports:
+      # Exposed for local health inspection (curl http://localhost:8080/healthz).
+      - "8080:8080"
+    restart: unless-stopped
+
+volumes:
+  spacedbro-data:

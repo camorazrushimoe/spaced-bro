@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spacedbro"
+version = "0.1.0"
+description = "SpacedBro — a Telegram SRS companion for language learning"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "aiogram>=3.7,<4",
+    "aiohttp>=3.9,<4",
+    "alembic>=1.13,<2",
+    "APScheduler>=3.10,<4",
+    "openai>=1.40,<2",
+    "SQLAlchemy>=2.0.30,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<9",
+    "pytest-asyncio>=0.23,<1",
+]
+
+[project.scripts]
+spacedbro = "spacedbro.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

@@ -1,15 +1,15 @@
 # Tasks: MVP Core — SpacedBro
 
 ## 1. Project setup
-- [ ] Python project + aiogram 3.x + OpenAI client + SQLAlchemy/Alembic
-- [ ] Env: `BOT_TOKEN`, `OPENAI_API_KEY`, `DATABASE_URL` (sqlite)
-- [ ] **Dockerfile + compose.yml** (bot service, volume for SQLite, healthcheck)
-- [ ] Long polling entrypoint + in-process APScheduler
-- [ ] Injectable clock utility
+- [x] Python project + aiogram 3.x + OpenAI client + SQLAlchemy/Alembic
+- [x] Env: `BOT_TOKEN`, `OPENAI_API_KEY`, `DATABASE_URL` (sqlite)
+- [x] **Dockerfile + compose.yml** (bot service, volume for SQLite, healthcheck)
+- [x] Long polling entrypoint + in-process APScheduler
+- [x] Injectable clock utility
 
 ## 2. Database
 - [ ] SQLite schema: users (native_lang, target_lang, …), learning_items (normalized_front unique, interval_minutes)
-- [ ] Alembic migrations; migrate on deploy/start
+- [x] Alembic migrations; migrate on deploy/start
 - [ ] Repositories: users, items, due query, duplicate check, boost, proactive counters
 
 ## 3. LLM

@@ -99,9 +99,9 @@ Example tone:
 
 - **Bot framework:** Python + aiogram 3.x
 - **LLM:** OpenAI with vision support (cost-efficient tier where possible). Token will be provided to developers.
-- **Storage:** PostgreSQL + Redis (recommended)
+- **Storage:** SQLite (single file on a Docker Compose named volume). PostgreSQL/Redis not required for MVP.
 - **SRS:** Simplified SM-2
-- **Scheduler:** Background jobs (APScheduler / Celery / equivalent)
+- **Scheduler:** In-process APScheduler (single instance, same process as the bot)
 - **Images:** Multimodal / vision model (in MVP)
 - **Voice:** Deferred to Phase 2
 
@@ -145,3 +145,61 @@ spaced-bro/
 ---
 
 See `openspec/changes/mvp-core/` for the full MVP specification.
+
+## Development & running
+
+### Requirements
+
+- Python 3.12+
+- [uv](https://docs.astral.sh/uv/) (or pip + venv)
+- Docker + Docker Compose (for the containerized deploy)
+
+### Configuration
+
+Configuration is environment-only — no secrets in code or committed files.
+Copy `.env.example` to `.env` and fill in real values:
+
+```bash
+cp .env.example .env
+# edit .env: BOT_TOKEN, OPENAI_API_KEY
+```
+
+Required: `BOT_TOKEN`, `OPENAI_API_KEY`. Optional: `DATABASE_URL` (defaults to
+`sqlite:////data/spacedbro.db`), `HEALTH_HOST`, `HEALTH_PORT`, `LOG_LEVEL`.
+
+### Run locally
+
+```bash
+uv venv .venv
+uv pip install -e ".[dev]"
+set -a; . ./.env; set +a          # export secrets for the process
+uv run python -m spacedbro
+```
+
+The process applies Alembic migrations first, starts the in-process
+APScheduler and the health server, then begins Telegram long polling.
+
+### Tests
+
+```bash
+uv run python -m pytest
+```
+
+### Run with Docker Compose
+
+```bash
+docker compose up --build
+```
+
+This builds the image, applies migrations on startup, mounts the SQLite file at
+`/data/spacedbro.db` on a named volume (`spacedbro-data`), and exposes a
+HEALTHCHECK-backed `/healthz` on port 8080. Verify:
+
+```bash
+curl http://localhost:8080/healthz   # {"status":"ok","database":"ok",...}
+docker compose ps                    # STATUS shows (healthy)
+```
+
+**Single-instance note:** MVP assumes one bot process (in-process APScheduler,
+no distributed lock). Run only one replica of the `bot` service.
+

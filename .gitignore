@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Secrets — never commit
+.env
+
+# Databases
+*.db
+*.sqlite3
+
+# Tooling
+.mypy_cache/
+.ruff_cache/
+.idea/
+.vscode/
+.DS_Store
