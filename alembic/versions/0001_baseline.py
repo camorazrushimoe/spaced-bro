@@ -5,7 +5,8 @@ Revises:
 Create Date: 2026-08-20
 
 Empty baseline establishing Alembic versioning for the project. The initial
-schema (users, learning_items) is added by the database ticket (BON-28).
+schema (users, learning_items) is added by the data model ticket (BON-29,
+revision 0002).
 """
 
 from alembic import op
