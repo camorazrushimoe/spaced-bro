@@ -7,6 +7,14 @@ services:
       # compose substitutes ${VAR} from the shell or the .env file.
       BOT_TOKEN: ${BOT_TOKEN}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
+      # LLM router (llm-router spec) — the container fails fast (exit 78)
+      # without APP_ENV; explicit LLM_* overrides compose per variable.
+      APP_ENV: ${APP_ENV}
+      LLM_PROVIDER: ${LLM_PROVIDER}
+      LLM_BASE_URL: ${LLM_BASE_URL}
+      LLM_MODEL: ${LLM_MODEL}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-30}
+      LLM_MAX_RETRIES: ${LLM_MAX_RETRIES:-2}
       # SQLite lives on the named volume at /data.
       DATABASE_URL: sqlite:////data/spacedbro.db
       HEALTH_HOST: 0.0.0.0
@@ -16,7 +24,16 @@ services:
     ports:
       # Exposed for local health inspection (curl http://localhost:8080/healthz).
       - "8080:8080"
+    networks:
+      # dev-env sandbox attach (deploy-dev convention: compose runs on
+      # the dev-crew-dev-env external network).
+      - dev-env
     restart: unless-stopped
 
 volumes:
   spacedbro-data:
+
+networks:
+  dev-env:
+    external: true
+    name: dev-crew-dev-env

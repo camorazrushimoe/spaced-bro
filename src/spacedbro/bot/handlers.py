@@ -1,4 +1,5 @@
-"""Telegram handlers for the add flow (BON-31).
+"""Telegram handlers for the add flow (BON-31) and the on-demand review
+session (BON-32).
 
 Implements the user-facing loop of ``openspec/changes/mvp-core/design.md``:
 
@@ -20,6 +21,18 @@ Implements the user-facing loop of ``openspec/changes/mvp-core/design.md``:
   bytes are process-and-discard (never stored).
 - §9 Errors: LLM/API failures → short retry message, no stack traces,
   no partial save. Voice → "not supported yet" reply.
+
+BON-32 adds the on-demand review session (design §7, tasks §4.6):
+``/review`` or a natural-language trigger reports how many items are
+due (``next_review_at <= now``, the BON-29 due query) and then presents
+ONE card at a time — front → [Show answer] → quality rating
+(Again/Hard/Good/Easy). After each rating the pure BON-28 engine
+``advance(state, quality, now)`` produces the new SRS state, which the
+BON-29 repository persists; the bot then offers the NEXT due card (the
+due queue is re-read after every rating) or stops. On-demand reviews
+never touch the proactive counter, and unattended due cards stay due
+(no penalty). The implementation lives in ``spacedbro.bot.review``
+(this module only routes to it).
 
 Callback protocol (design §1): every actionable button carries a unique
 random ``callback_id`` nonce; the payload is a **short opaque reference**
@@ -43,13 +56,15 @@ import logging
 from typing import Any
 
 from aiogram import F, Router, types
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandStart
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy.exc import IntegrityError
 
 from spacedbro.bot import callbacks as cb
+from spacedbro.bot import review
 from spacedbro.bot.services import (
     LLMCaller,
+    ensure_profile,
     extract_candidates,
     extract_from_image,
     generate_back,
@@ -329,20 +344,6 @@ def _parse_lang_code(text: str) -> str | None:
     return None
 
 
-def _ensure_profile(users: UserRepository, clock: Clock, tg_id: int) -> tuple[User, bool]:
-    """Profile row + whether it was just created (design §4 first interaction)."""
-    user = users.profile(tg_id)
-    created = False
-    if user is None:
-        users.get_or_create(tg_id, clock.utc_now())
-        user = users.profile(tg_id)
-        created = True
-    if user is None:
-        raise RuntimeError(f"profile for telegram id {tg_id} missing after creation")
-    users.touch_activity(user.id, clock.utc_now())
-    return user, created
-
-
 def _store_candidates(
     store: ContextStore, tg_id: int, candidates: list[Candidate]
 ) -> list[tuple[str, Candidate]]:
@@ -362,6 +363,7 @@ def build_add_flow_router() -> Router:
     """Router with all add-flow handlers; dependencies arrive as kwargs."""
     router = Router()
     router.message.register(handle_start, CommandStart())
+    router.message.register(handle_review, Command("review"))
     router.message.register(handle_text, F.text)
     router.message.register(handle_photo, F.photo)
     router.message.register(handle_voice, F.voice | F.audio)
@@ -382,9 +384,9 @@ async def handle_start(
 ) -> None:
     """/start — welcome, create profile if needed, ask target language ONCE."""
     tg_id = message.from_user.id
-    user, created = _ensure_profile(users, clock, tg_id)
+    user = ensure_profile(users, clock, tg_id)
 
-    if created or not user.onboarding_asked:
+    if not user.onboarding_asked:
         users.mark_onboarding_asked(user.id)
         store.set(tg_id, "pending_lang", True)
         await message.answer(
@@ -399,6 +401,7 @@ async def handle_text(
     *,
     clock: Clock,
     users: UserRepository,
+    items: ItemRepository,
     store: ContextStore,
     llm_client: LLMCaller,
     **_extra: Any,
@@ -407,7 +410,16 @@ async def handle_text(
     if not message.text:
         return
     tg_id = message.from_user.id
-    user, _ = _ensure_profile(users, clock, tg_id)
+    user = ensure_profile(users, clock, tg_id)
+
+    # On-demand review entry, natural language (design §7 "On-demand
+    # /review or NL"): a review intent is handled before extraction, so a
+    # "review my words" is never swallowed as a learning request.
+    if review.is_review_intent(message.text):
+        await review.start_review_session(
+            message, clock=clock, users=users, items=items, store=store
+        )
+        return
 
     # Onboarding answer (asked once — never again, design §4).
     if store.get(tg_id, "pending_lang"):
@@ -458,7 +470,7 @@ async def handle_photo(
     if not message.photo:
         return
     tg_id = message.from_user.id
-    user, _ = _ensure_profile(users, clock, tg_id)
+    user = ensure_profile(users, clock, tg_id)
 
     # Largest photo size; bytes are process-and-discard (never stored).
     largest = message.photo[-1]
@@ -502,6 +514,21 @@ async def handle_photo(
     await message.answer(CANDIDATES_INTRO, reply_markup=_candidate_buttons(pairs))
 
 
+async def handle_review(
+    message: types.Message,
+    *,
+    clock: Clock,
+    users: UserRepository,
+    items: ItemRepository,
+    store: ContextStore,
+    **_extra: Any,
+) -> None:
+    """/review — start (or resume) the on-demand review session."""
+    await review.start_review_session(
+        message, clock=clock, users=users, items=items, store=store
+    )
+
+
 async def handle_voice(message: types.Message, **_extra: Any) -> None:
     """Voice — MUST get a short 'not supported yet' reply (design §9)."""
     if not (message.voice or message.audio):
@@ -527,7 +554,7 @@ async def handle_callback(
         return
     action, payload, callback_id = parsed
     tg_id = callback.from_user.id
-    user, _ = _ensure_profile(users, clock, tg_id)
+    user = ensure_profile(users, clock, tg_id)
 
     if not ledger.first_seen(callback_id):
         # Replay (double-tap / redelivery): no-op — short ack only.
@@ -554,6 +581,16 @@ async def handle_callback(
         await callback.answer("Skipped")
     elif action == cb.ACTION_BOOST:
         await _handle_boost(callback, items, user, payload)
+    elif action in (cb.ACTION_SHOW, cb.ACTION_RATE, cb.ACTION_STOP):
+        await review.handle_review_callback(
+            callback,
+            clock=clock,
+            items=items,
+            store=store,
+            action=action,
+            payload=payload,
+            user=user,
+        )
     else:
         await callback.answer()
 

@@ -286,6 +286,17 @@ class ItemRepository:
 
     # --- SRS updates -----------------------------------------------------------
 
+    def get(self, user_id: int, item_id: int) -> Optional[LearningItem]:
+        """The item row for ``item_id`` if it belongs to ``user_id``.
+
+        Read-only seam for handlers that need one card's current SRS
+        state (the review session feeds it to the pure engine).
+        """
+        item = self.session.get(LearningItem, item_id)
+        if item is None or item.user_id != user_id:
+            return None
+        return item
+
     def update_srs(
         self,
         user_id: int,

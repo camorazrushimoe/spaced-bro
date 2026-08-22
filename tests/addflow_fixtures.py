@@ -37,13 +37,23 @@ NOW = datetime(2026, 8, 22, 10, 0, 0, tzinfo=timezone.utc)
 TG_ID = 42
 
 
-class FrozenNow:
-    """Deterministic clock (fixed UTC now) for handler/repo time reads."""
+class SteadyClock:
+    """Deterministic clock (fixed UTC now) for handler/repo time reads.
+
+    ``advance`` moves the frozen time forward, so tests can model real
+    elapsed time between interactions (e.g. a due card after a rating).
+    """
 
     def __init__(self, now: datetime) -> None:
         self._now = now
 
     def utc_now(self) -> datetime:
+        return self._now
+
+    def advance(self, **kwargs: float) -> datetime:
+        from datetime import timedelta
+
+        self._now = self._now + timedelta(**kwargs)
         return self._now
 
     async def sleep(self, seconds: float) -> None:  # pragma: no cover
@@ -203,7 +213,7 @@ def make_callback(*, data: str, tg_id: int = TG_ID, message: Any = None) -> Call
 
 def make_deps(session: Session, fake_llm: FakeLLM, bot: Any | None = None, now: datetime = NOW) -> dict[str, Any]:
     """The handler dependency set (mirrors BotApplication wiring)."""
-    clock = FrozenNow(now)
+    clock = SteadyClock(now)
     return {
         "clock": clock,
         "llm_client": fake_llm,
