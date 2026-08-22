@@ -35,11 +35,25 @@ _install_stderr_handler()
 
 
 def configure_logging(level: str = "INFO") -> None:
+    """Set the process log level and format.
+
+    The root level is set explicitly, on top of ``logging.basicConfig``:
+    the import-time stderr handler (see :func:`_install_stderr_handler`)
+    makes ``basicConfig`` a no-op once it has run — and that is exactly
+    when the level must still apply, because the llm-router spec requires
+    the INFO-level ``LLM resolved configuration`` line to appear in normal
+    logs without a debug flag.
+    """
+    resolved_level = getattr(logging, level.upper(), logging.INFO)
     logging.basicConfig(
-        level=getattr(logging, level.upper(), logging.INFO),
+        level=resolved_level,
         format=_DEFAULT_FORMAT,
         stream=sys.stderr,
     )
+    root = logging.getLogger()
+    root.setLevel(resolved_level)
+    for handler in root.handlers:
+        handler.setFormatter(logging.Formatter(_DEFAULT_FORMAT))
     # Keep noisy third-party loggers quiet unless debugging.
     logging.getLogger("aiogram").setLevel(logging.WARNING)
     logging.getLogger("apscheduler").setLevel(logging.WARNING)

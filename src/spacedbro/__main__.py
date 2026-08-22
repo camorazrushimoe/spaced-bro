@@ -2,9 +2,9 @@
 
 Boots the process in order: load settings (fail fast with exit code 78 /
 EX_CONFIG on any configuration error, BEFORE the service port is bound),
-apply Alembic migrations (before any traffic), build the LLM client (the
-only door to the LLM, injected into handlers), start the in-process
-APScheduler, start the health server, then run Telegram long polling.
+apply Alembic migrations (before any traffic), start the in-process
+APScheduler, build the LLM client (the only door to the LLM, injected into
+handlers), start the health server, then run Telegram long polling.
 """
 
 from __future__ import annotations

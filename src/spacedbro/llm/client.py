@@ -233,8 +233,6 @@ class LLMClient(Protocol):
                     {"type": "text", "text": message.content},
                 ],
             }
-            if isinstance(message.content, str)
-            else {"role": message.role, "content": message.content}
             for message in messages
         ]
         body = self._build_body(
