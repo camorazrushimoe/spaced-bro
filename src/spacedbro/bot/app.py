@@ -69,6 +69,15 @@ class BotApplication:
         self._dispatcher.include_router(build_add_flow_router())
         self._dispatcher.errors.register(self._on_error, ErrorEvent)
 
+    async def send_message(self, telegram_id: int, text: str) -> None:
+        """Proactive send seam (BON-33, design §8): one outbound message.
+
+        The scheduler's tick calls this with a user's ``telegram_id`` and
+        the nudge text. Kept on the application (not the raw ``Bot``) so
+        the seam is stable — the scheduler never imports aiogram internals.
+        """
+        await self._bot.send_message(telegram_id, text)
+
     async def _on_error(self, event: ErrorEvent) -> None:
         """Global friendly errors (design §9): log with context, and —
         when the failed update carries a user message — answer it with a

@@ -43,6 +43,27 @@ DEFAULT_NATIVE_LANG = "ru"
 #: user-memory spec: only one target language; English by default.
 DEFAULT_TARGET_LANG = "en"
 
+#: 24-bucket UTC activity histogram (index == UTC hour). The canonical
+#: width — the column default, ``UserRepository`` and the scheduler's
+#: activity heuristics all use this one constant (BON-29 schema, design §4).
+ACTIVITY_BUCKETS = 24
+
+
+def normalize_activity_buckets(
+    buckets: "list[int] | None",
+) -> list[int]:
+    """A guaranteed full 24-bucket histogram (index == UTC hour).
+
+    ``None`` (a profile predating the column) and short lists are padded
+    with zeros; this is the single normalization the scheduler and the
+    repositories share (BON-33 code review — the rule lived in three
+    copies before).
+    """
+    counts = list(buckets) if buckets else []
+    while len(counts) < ACTIVITY_BUCKETS:
+        counts.append(0)
+    return counts
+
 
 class UserLevel(str, Enum):
     """Heuristic proficiency level (design §4)."""
@@ -102,7 +123,7 @@ class User(Base):
     )
     #: 24-bucket UTC activity histogram: index == UTC hour, value == count.
     activity_hours_utc: Mapped[list] = mapped_column(
-        JSON, nullable=False, default=lambda: [0] * 24
+        JSON, nullable=False, default=lambda: [0] * ACTIVITY_BUCKETS
     )
     #: Proactive messages sent on ``proactive_count_date`` (UTC date).
     proactive_count: Mapped[int] = mapped_column(

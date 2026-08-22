@@ -34,8 +34,8 @@
 - [ ] Unit tests with frozen clock (Again/Hard/Good/Easy, boost, cap)
 
 ## 6. Scheduler
-- [ ] APScheduler job; UTC midnight cap; cold-start 09–21 UTC; 14-day back-off
-- [ ] Cap scaling 1/2/3; on-demand excluded
+- [x] APScheduler job; UTC midnight cap; cold-start 09–21 UTC; 14-day back-off
+- [x] Cap scaling 1/2/3; on-demand excluded
 
 ## 7. Polish
 - [ ] Logs/metrics; local README; smoke checklist including confirm-back, non-learning text, duplicate+boost, review session, proactive dry-run

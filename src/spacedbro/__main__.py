@@ -2,9 +2,14 @@
 
 Boots the process in order: load settings (fail fast with exit code 78 /
 EX_CONFIG on any configuration error, BEFORE the service port is bound),
-apply Alembic migrations (before any traffic), start the in-process
-APScheduler, build the LLM client (the only door to the LLM, injected into
-handlers), start the health server, then run Telegram long polling.
+apply Alembic migrations (before any traffic), build the bot (repositories
++ send seam), start the in-process APScheduler (BON-33 — the proactive
+pass is wired to the bot's send seam and its session factory), start the
+health server, then run Telegram long polling.
+
+**Single instance:** the in-process scheduler has no distributed lock —
+run exactly one bot replica (README "Proactive scheduling (operator
+note)"; ``spacedbro.scheduler`` module docstring).
 """
 
 from __future__ import annotations
@@ -54,16 +59,33 @@ async def _run() -> None:
 
     clock = UtcClock()
 
-    # 2. In-process scheduler (single instance, same process as the bot).
-    scheduler = build_scheduler(clock)
-    scheduler.start()
-    logger.info("In-process APScheduler started")
-
-    # 3. LLM client — constructed here and injected into the bot/handlers
+    # 2. LLM client — constructed here and injected into the bot/handlers
     #    (handlers never instantiate provider clients themselves).
     llm_client = build_llm_client(llm_settings, clock=clock)
 
-    # 4. Health server (target of the container HEALTHCHECK).
+    # 3. Bot application — owns the repositories (the only persistent
+    #    state, BON-29) and the proactive send seam (BON-33).
+    app = build_bot(settings.bot_token, llm_client, settings.database_url, clock)
+
+    # 4. In-process scheduler (single instance, same process as the bot —
+    #    NO distributed lock in MVP; the operator MUST run one replica).
+    #    The tick reads/writes the same SQLite the bot uses, through the
+    #    app's session factory, and sends via the bot's send seam.
+    scheduler = build_scheduler(
+        clock,
+        settings.scheduler_interval_minutes,
+        sender=app.send_message,
+        session_factory=app.session_factory,
+        dry_run=settings.scheduler_dry_run,
+    )
+    scheduler.start()
+    logger.info(
+        "In-process APScheduler started (interval=%dm dry_run=%s)",
+        settings.scheduler_interval_minutes,
+        settings.scheduler_dry_run,
+    )
+
+    # 5. Health server (target of the container HEALTHCHECK).
     await start_health_server(
         settings.health_host,
         settings.health_port,
@@ -71,10 +93,9 @@ async def _run() -> None:
         clock,
     )
 
-    # 5. Telegram long polling — blocks until the process is stopped.
-    bot = build_bot(settings.bot_token, llm_client, settings.database_url, clock)
+    # 6. Telegram long polling — blocks until the process is stopped.
     try:
-        await bot.run()
+        await app.run()
     except TelegramUnauthorizedError as exc:
         logger.error("Telegram rejected BOT_TOKEN (401 Unauthorized): %s", exc)
         raise
