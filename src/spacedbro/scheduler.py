@@ -64,6 +64,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
 
 from spacedbro.clock import Clock
+from spacedbro.config import DEFAULT_SCHEDULER_INTERVAL_MINUTES
 from spacedbro.db.models import ACTIVITY_BUCKETS, normalize_activity_buckets
 from spacedbro.db.repositories import ItemRepository, UserRepository
 
@@ -74,8 +75,9 @@ UTC = ZoneInfo("UTC")
 # --- Design §8 constants ------------------------------------------------------
 
 #: How often the proactive pass runs ("job every N minutes"; N is
-#: configurable via ``SCHEDULER_INTERVAL_MINUTES``, default 5).
-DEFAULT_INTERVAL_MINUTES = 5
+#: configurable via ``SCHEDULER_INTERVAL_MINUTES``). Single source: the
+#: operator-facing default in :mod:`spacedbro.config`.
+DEFAULT_INTERVAL_MINUTES = DEFAULT_SCHEDULER_INTERVAL_MINUTES
 #: Cold-start window: hours 9..20 (09:00–21:00 UTC, end exclusive).
 COLD_START_FIRST_HOUR = 9
 COLD_START_LAST_HOUR = 21
@@ -103,17 +105,12 @@ Sender = Callable[[int, str], Awaitable[None]]
 SessionFactory = Callable[[], Session]
 
 
+@dataclass(frozen=True)
 class ProactiveDecision:
     """Outcome of the per-user gate (why a user is / is not nudged)."""
 
-    __slots__ = ("allowed", "reason")
-
-    def __init__(self, allowed: bool, reason: str) -> None:
-        self.allowed = allowed
-        self.reason = reason
-
-    def __repr__(self) -> str:  # pragma: no cover - debugging aid
-        return f"ProactiveDecision(allowed={self.allowed}, reason={self.reason!r})"
+    allowed: bool
+    reason: str
 
 
 @dataclass(frozen=True)
@@ -159,8 +156,9 @@ def active_window(buckets: Optional[list[int]]) -> set[int]:
 
     Cold start (no histogram / all zero): ``09:00–21:00 UTC`` (scheduler
     spec "Cold-start window"). Otherwise the user's peak active hour ±1
-    ("the bot tries not to bother them when it is inconvenient" — the
-    histogram is the recorded activity pattern).
+    (scheduler spec "Active window (warm start)" — the histogram is the
+    recorded activity pattern, so the bot tries not to bother them when
+    it is inconvenient).
     """
     counts = normalize_activity_buckets(buckets)
     if sum(counts) == 0:

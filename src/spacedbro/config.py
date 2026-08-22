@@ -22,8 +22,9 @@ DEFAULT_SCHEDULER_INTERVAL_MINUTES = 5
 #: pass runs, nothing is sent or counted.
 DEFAULT_SCHEDULER_DRY_RUN = False
 
-#: SCHEDULER_DRY_RUN truthy values (case-insensitive).
+#: SCHEDULER_DRY_RUN values (case-insensitive).
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
+_FALSY = frozenset({"0", "false", "no", "off"})
 
 
 class ConfigError(RuntimeError):
@@ -112,7 +113,7 @@ def _parse_scheduler_dry_run(raw: str) -> bool:
         return DEFAULT_SCHEDULER_DRY_RUN
     if raw in _TRUTHY:
         return True
-    if raw in frozenset({"0", "false", "no", "off"}):
+    if raw in _FALSY:
         return False
     raise ConfigError(
         f"SCHEDULER_DRY_RUN must be one of 1/true/yes/on/0/false/no/off, "

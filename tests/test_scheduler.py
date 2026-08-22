@@ -43,6 +43,7 @@ from spacedbro.scheduler import (
     COLD_START_FIRST_HOUR,
     COLD_START_LAST_HOUR,
     DEFAULT_INTERVAL_MINUTES,
+    ProactiveStats,
     _proactive_tick,
     activity_cap,
     active_window,
@@ -52,7 +53,7 @@ from spacedbro.scheduler import (
     render_nudge,
     run_proactive_pass,
 )
-from spacedbro.scheduler import ProactiveStats
+from spacedbro.srs import Quality, SRSState, SRSStatus, advance
 
 UTC = timezone.utc
 
@@ -384,7 +385,7 @@ async def test_pass_nudges_due_user_and_counts_one_proactive(
     assert len(sender.sent) == 1
     telegram_id, text = sender.sent[0]
     assert telegram_id == 101
-    assert "1" in text  # reports the due count
+    assert text == render_nudge(1)  # reports the due count (exact nudge)
     user = session.get(User, uid)
     assert user is not None
     assert user.proactive_count == 1
@@ -576,7 +577,6 @@ async def test_on_demand_review_does_not_spend_the_proactive_budget(
     # untouched; when a NEW card becomes due, proactive still fires.
     uid = _seed_user(users, session, clock, 301, buckets=_hot_buckets(12))
     first = _seed_due_item(items, uid, front="apple")
-    from spacedbro.srs import Quality, SRSState, SRSStatus, advance
 
     item = items.get(uid, first)
     assert item is not None
