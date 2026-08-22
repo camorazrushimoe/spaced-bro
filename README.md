@@ -98,7 +98,7 @@ Example tone:
 ## Tech Stack (MVP)
 
 - **Bot framework:** Python + aiogram 3.x
-- **LLM:** OpenAI with vision support (cost-efficient tier where possible). Token will be provided to developers.
+- **LLM:** environment-aware router (`spacedbro/llm`) — local OpenAI-compatible server (Gemma 4) for development, OpenAI `gpt-5.6-luna` for preprod/production; one client, switched by env vars only (see `openspec/changes/llm-router/`)
 - **Storage:** SQLite (single file on a Docker Compose named volume). PostgreSQL/Redis not required for MVP.
 - **SRS:** Simplified SM-2
 - **Scheduler:** In-process APScheduler (single instance, same process as the bot)
@@ -161,11 +161,46 @@ Copy `.env.example` to `.env` and fill in real values:
 
 ```bash
 cp .env.example .env
-# edit .env: BOT_TOKEN, OPENAI_API_KEY
+# edit .env: BOT_TOKEN, APP_ENV, (OPENAI_API_KEY for preprod/production)
 ```
 
-Required: `BOT_TOKEN`, `OPENAI_API_KEY`. Optional: `DATABASE_URL` (defaults to
-`sqlite:////data/spacedbro.db`), `HEALTH_HOST`, `HEALTH_PORT`, `LOG_LEVEL`.
+- **Required:** `BOT_TOKEN`, `APP_ENV` (exactly `development` | `preprod` | `production`).
+- **Provider-driven key check:** `OPENAI_API_KEY` is required only when the
+  resolved LLM provider is `openai` (the `preprod`/`production` default). A
+  fully local setup never needs it — the development backend uses a fixed
+  `local-dev` sentinel key that is never read from `OPENAI_API_KEY`.
+- Any configuration error (unknown `APP_ENV`, invalid `LLM_PROVIDER`, missing
+  key, bad `LLM_TIMEOUT_SECONDS`/`LLM_MAX_RETRIES`) aborts startup with exit
+  code **78** (`EX_CONFIG`) and an `ERROR` log naming the offending variable —
+  before the service port is bound.
+
+**LLM resolution** (pinned defaults; each variable may be overridden
+independently — `LLM_PROVIDER`, `LLM_MODEL`, `LLM_BASE_URL`, `OPENAI_API_KEY`,
+`LLM_TIMEOUT_SECONDS` (default 30), `LLM_MAX_RETRIES` (default 2)):
+
+| `APP_ENV` | provider | base_url | model | api_key |
+|---|---|---|---|---|
+| `development` | `openai_compatible` | `http://localhost:11434/v1` | `gemma-4-e2b-it` | `local-dev` (sentinel) |
+| `preprod` | `openai` | `https://api.openai.com/v1` | `gpt-5.6-luna` | `OPENAI_API_KEY` (required) |
+| `production` | `openai` | `https://api.openai.com/v1` | `gpt-5.6-luna` | `OPENAI_API_KEY` (required) |
+
+Optional: `DATABASE_URL` (defaults to `sqlite:////data/spacedbro.db`),
+`HEALTH_HOST`, `HEALTH_PORT`, `LOG_LEVEL`.
+
+### Local LLM: Gemma 4 via Ollama
+
+Development defaults point at an OpenAI-compatible local server
+(`http://localhost:11434/v1`) running a Gemma 4 variant:
+
+```bash
+ollama pull gemma-4-e2b-it    # E2B (fast) or a larger variant for quality
+```
+
+A different local server or tag (LM Studio, vLLM, another variant) is
+selected by overriding `LLM_BASE_URL` / `LLM_MODEL` / `LLM_PROVIDER` — no
+extra config variable exists. Vision (image add) needs a vision-capable
+local model; without it the bot answers "image add is not available in this
+environment" (the `vision_not_supported` domain error) instead of crashing.
 
 ### Run locally
 
@@ -176,8 +211,17 @@ set -a; . ./.env; set +a          # export secrets for the process
 uv run python -m spacedbro
 ```
 
-The process applies Alembic migrations first, starts the in-process
-APScheduler and the health server, then begins Telegram long polling.
+The process resolves its configuration first (failing fast with exit 78 on
+any config error), applies Alembic migrations, builds the LLM client (the
+only door to the LLM — handlers receive it by injection and never
+instantiate provider clients themselves), starts the in-process APScheduler
+and the health server, then begins Telegram long polling.
+
+**Smoke checklist** (per backend): text add → extraction returns candidates;
+photo add → vision extraction works (local: requires a vision-capable model);
+review cycle → `back` generation produces the short reply. The INFO log line
+`LLM resolved configuration: APP_ENV=… provider=… model=… base_url=…`
+confirms which backend is active.
 
 ### Tests
 
