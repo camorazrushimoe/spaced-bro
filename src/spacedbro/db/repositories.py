@@ -29,15 +29,14 @@ from sqlalchemy.orm import Session
 
 from spacedbro.clock import Clock
 from spacedbro.db.models import (
+    ACTIVITY_BUCKETS,
     NEW_EASE,
     NEW_INTERVAL_MINUTES,
     ItemStatus,
     LearningItem,
     User,
+    normalize_activity_buckets,
 )
-
-#: 24-bucket UTC activity histogram (index == UTC hour).
-ACTIVITY_BUCKETS = 24
 
 
 class ItemNotFoundError(LookupError):
@@ -173,9 +172,7 @@ class UserRepository:
         """
         instant = _require_aware(now if now is not None else self._clock.utc_now())
         user = self._get_or_raise(user_id)
-        buckets = list(user.activity_hours_utc or [0] * ACTIVITY_BUCKETS)
-        while len(buckets) < ACTIVITY_BUCKETS:
-            buckets.append(0)
+        buckets = normalize_activity_buckets(user.activity_hours_utc)
         buckets[instant.hour] += 1
         user.activity_hours_utc = buckets
         user.last_active_at = instant
@@ -213,6 +210,21 @@ class UserRepository:
         if user.proactive_count_date != instant.date():
             return True
         return user.proactive_count < cap
+
+    def proactive_count_today(self, user_id: int, now: Optional[datetime] = None) -> int:
+        """Proactive messages sent on ``now``'s UTC date (else 0).
+
+        The UTC-midnight reset of design §8 lives HERE (the canonical
+        rollover rule, shared with :meth:`record_proactive` /
+        :meth:`proactive_under_cap`); the scheduler reads the counter
+        through this seam instead of re-deriving the rollover (BON-33 code
+        review — one home for the rule).
+        """
+        instant = _require_aware(now if now is not None else self._clock.utc_now())
+        user = self.session.get(User, user_id)
+        if user is None or user.proactive_count_date != instant.date():
+            return 0
+        return user.proactive_count
 
     # --- Helpers ---------------------------------------------------------------
 

@@ -250,9 +250,6 @@ curl http://localhost:8080/healthz   # {"status":"ok","database":"ok",...}
 docker compose ps                    # STATUS shows (healthy)
 ```
 
-**Single-instance note:** MVP assumes one bot process (in-process APScheduler,
-no distributed lock). Run only one replica of the `bot` service.
-
 ### Proactive scheduling (operator note)
 
 The bot runs an **in-process APScheduler** (same process, same event loop)

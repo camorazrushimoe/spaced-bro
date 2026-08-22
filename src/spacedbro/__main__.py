@@ -7,10 +7,9 @@ apply Alembic migrations (before any traffic), build the bot (repositories
 pass is wired to the bot's send seam and its session factory), start the
 health server, then run Telegram long polling.
 
-**Single instance (operator note, scheduler spec "Single-instance"):** the
-scheduler runs IN-PROCESS with NO distributed lock — run exactly one bot
-replica (see README "Single-instance note" and ``spacedbro.scheduler``'s
-module docstring).
+**Single instance:** the in-process scheduler has no distributed lock —
+run exactly one bot replica (README "Proactive scheduling (operator
+note)"; ``spacedbro.scheduler`` module docstring).
 """
 
 from __future__ import annotations

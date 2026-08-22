@@ -9,34 +9,33 @@ pass** over all users: for each user it applies, in order,
 2. **Daily cap** — skip if ``proactive_count`` for today's UTC date already
    equals the user's cap. The cap scales with activity (design §8):
    0 messages in the last 7 days -> 1; >=3 distinct UTC hours active -> 3;
-   else 2. The counter resets at UTC midnight (the repository rolls it over
-   when the UTC date changes; "a day" is a UTC calendar date);
+   else 2. The counter resets at UTC midnight (the repository rolls it
+   over when the UTC date changes; "a day" is a UTC calendar date);
 3. **Active window** — the peak active hour ±1, derived from the UTC
-   activity histogram. **Cold start** (no histogram at all): 09:00–21:00 UTC.
+   activity histogram. **Cold start** (no histogram at all): 09:00–21:00
+   UTC.
 
 If the user survives the gates, has items in the **shared due queue**
 (``next_review_at <= now`` — the same queue on-demand ``/review`` reads,
 design §7), and is under the cap, the bot sends ONE short nudge reporting
-how many cards are due. The nudge does NOT consume the queue: due items stay
-due for on-demand review, and the rest beyond the cap wait for later days
-(design §7 "Unattended due cards").
+how many cards are due. The nudge does NOT consume the queue: due items
+stay due for on-demand review, and the rest beyond the cap wait for later
+days (design §7 "Unattended due cards").
 
 **On-demand reviews never increment ``proactive_count``** — only a
-successful proactive send does (``UserRepository.record_proactive``, called
-here AFTER the send succeeds, so a failed send is not counted and the user
-gets the chance again next tick).
+successful proactive send does (``UserRepository.record_proactive``,
+called here AFTER the send succeeds, so a failed send is not counted and
+the user gets the chance again next tick).
 
 **Dry run** (``SCHEDULER_DRY_RUN=1``): the full pass runs (stats + debug
 logs), nothing is sent and nothing is counted — the verification mode of
 the ticket's smoke checklist ("proactive dry-run").
 
-**Single-instance assumption (operator note, scheduler spec
-"Single-instance"):** the scheduler runs IN-PROCESS in the single bot
-process. MVP has NO distributed lock and no coordination between
-instances — running two bot replicas would double proactive sends and
-corrupt the daily counter. The deployment MUST run exactly one ``bot``
-replica (see README "Single-instance note"); Postgres/Redis and a
-distributed lock are the documented upgrade path (design §10), out of MVP
+**Single-instance assumption:** the scheduler runs IN-PROCESS in the single
+bot process — NO distributed lock in MVP; running two bot replicas would
+double proactive sends and corrupt the daily counters. See the README
+"Proactive scheduling (operator note)" (canonical operator text); the
+Postgres/Redis + distributed-lock upgrade path is design §10, out of MVP
 scope.
 
 Data-model note (why the 7-day window is an approximation): the BON-29
@@ -65,7 +64,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
 
 from spacedbro.clock import Clock
-from spacedbro.db.models import User
+from spacedbro.db.models import ACTIVITY_BUCKETS, normalize_activity_buckets
 from spacedbro.db.repositories import ItemRepository, UserRepository
 
 logger = logging.getLogger(__name__)
@@ -92,8 +91,8 @@ ACTIVITY_WINDOW_DAYS = 7
 #: Number of distinct UTC hours that count as "high activity" (design §8:
 #: "active >=3 distinct UTC hours in the last 7 days -> 3").
 HIGH_ACTIVITY_HOURS = 3
-#: 24-bucket UTC histogram width (index == UTC hour).
-HISTORY_HOURS = 24
+#: Width of the UTC histogram — the shared constant (BON-29 schema).
+HISTORY_HOURS = ACTIVITY_BUCKETS
 
 
 #: Production sender signature: (telegram_id, nudge text) -> None.
@@ -147,9 +146,7 @@ def activity_cap(
     """
     if last_active_at < now - timedelta(days=ACTIVITY_WINDOW_DAYS):
         return CAP_LOW
-    counts = list(buckets) if buckets else []
-    while len(counts) < HISTORY_HOURS:
-        counts.append(0)
+    counts = normalize_activity_buckets(buckets)
     if sum(counts) == 0:
         return CAP_LOW
     if sum(1 for c in counts if c > 0) >= HIGH_ACTIVITY_HOURS:
@@ -165,9 +162,7 @@ def active_window(buckets: Optional[list[int]]) -> set[int]:
     ("the bot tries not to bother them when it is inconvenient" — the
     histogram is the recorded activity pattern).
     """
-    counts = list(buckets) if buckets else []
-    while len(counts) < HISTORY_HOURS:
-        counts.append(0)
+    counts = normalize_activity_buckets(buckets)
     if sum(counts) == 0:
         return set(range(COLD_START_FIRST_HOUR, COLD_START_LAST_HOUR))
     peak = max(range(HISTORY_HOURS), key=lambda h: (counts[h], -h))
@@ -184,19 +179,20 @@ def decide_proactive(
     *,
     last_active_at: datetime,
     buckets: Optional[list[int]],
-    count_today: int,
+    proactive_count_today: int,
     now: datetime,
 ) -> ProactiveDecision:
     """Apply the three gates in order: back-off, daily cap, active window.
 
-    ``count_today`` is the number of proactive messages sent on ``now``'s
-    UTC date (already-rolled-over counter semantics — see
-    ``UserRepository.proactive_under_cap``).
+    ``proactive_count_today`` is the number of proactive messages sent on
+    ``now``'s UTC date — read through the repository seam
+    (``UserRepository.proactive_count_today``), which owns the UTC-midnight
+    reset.
     """
     if is_backed_off(last_active_at, now):
         return ProactiveDecision(False, "back-off (inactive >14d)")
     cap = activity_cap(buckets, last_active_at, now)
-    if count_today >= cap:
+    if proactive_count_today >= cap:
         return ProactiveDecision(False, f"daily cap reached ({cap})")
     if now.hour not in active_window(buckets):
         return ProactiveDecision(False, "outside active window")
@@ -222,7 +218,7 @@ async def run_proactive_pass(
     clock: Clock,
     users: UserRepository,
     items: ItemRepository,
-    sender: Optional[Sender],
+    sender: Sender,
     dry_run: bool = False,
 ) -> ProactiveStats:
     """One proactive pass over all users.
@@ -246,7 +242,7 @@ async def run_proactive_pass(
         decision = decide_proactive(
             last_active_at=user.last_active_at,
             buckets=user.activity_hours_utc,
-            count_today=_count_today(user, now),
+            proactive_count_today=users.proactive_count_today(user.id, now),
             now=now,
         )
         if not decision.allowed:
@@ -267,9 +263,6 @@ async def run_proactive_pass(
                 "proactive DRY-RUN: would nudge %s (%d due)", user.telegram_id, len(due)
             )
             _skip("dry-run")
-            continue
-        if sender is None:
-            _skip("no sender wired")
             continue
         try:
             await sender(user.telegram_id, text)
@@ -298,37 +291,23 @@ async def run_proactive_pass(
     )
 
 
-def _count_today(user: User, now: datetime) -> int:
-    """Proactive count for today's UTC date (new date -> 0 — the UTC
-    midnight reset of design §8)."""
-    if user.proactive_count_date == now.date():
-        return user.proactive_count
-    return 0
-
-
 # --- APScheduler wiring ---------------------------------------------------------
 
 
 async def _proactive_tick(
     clock: Clock,
-    sender: Optional[Sender] = None,
-    session_factory: Optional[SessionFactory] = None,
-    dry_run: bool = False,
+    sender: Sender,
+    session_factory: SessionFactory,
+    dry_run: bool,
 ) -> None:
     """The scheduled job: open ONE session, run the pass, close it.
 
     Pre-BON-33 this was a no-op placeholder (the rules were deferred to a
-    later ticket); now it runs the real pass. Without a wired sender /
-    session factory (pre-wiring callers) it is a harmless no-op. A single
-    session serves the whole pass because the repositories commit per
-    mutation — the pass is the unit of work.
+    later ticket); now it runs the real pass. A single session serves the
+    whole pass because the repositories commit per mutation — the pass is
+    the unit of work. The wiring (``sender`` / ``session_factory``) is
+    required: the boot path always provides it (see ``spacedbro.__main__``).
     """
-    if sender is None and session_factory is None:
-        logger.debug("proactive tick: no wiring yet (no-op)")
-        return
-    if session_factory is None:
-        logger.warning("proactive tick: no session factory — pass skipped")
-        return
     session = session_factory()
     try:
         stats = await run_proactive_pass(
@@ -353,15 +332,15 @@ def build_scheduler(
     clock: Clock,
     interval_minutes: int = DEFAULT_INTERVAL_MINUTES,
     *,
-    sender: Optional[Sender] = None,
-    session_factory: Optional[SessionFactory] = None,
+    sender: Sender,
+    session_factory: SessionFactory,
     dry_run: bool = False,
 ) -> AsyncIOScheduler:
     """Create the in-process scheduler with the proactive review tick.
 
     Runs in the same event loop as the bot (single instance — see module
-    docstring for the operator note). The daily cap, cold-start window and
-    back-off rules live in :func:`decide_proactive` /
+    docstring and the README operator note). The daily cap, cold-start
+    window and back-off rules live in :func:`decide_proactive` /
     :func:`run_proactive_pass`; this only wires the interval trigger
     (``interval_minutes`` = N of "job every N minutes", design §8).
     ``build_scheduler`` never starts the loop — ``__main__`` owns the

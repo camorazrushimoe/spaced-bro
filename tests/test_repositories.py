@@ -14,14 +14,13 @@ Covers, per the ticket's acceptance criteria and the two capability specs:
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from spacedbro.db.base import Base
 from spacedbro.db.models import (
     DEFAULT_NATIVE_LANG,
     DEFAULT_TARGET_LANG,
@@ -38,46 +37,10 @@ from spacedbro.db.repositories import (
     UserRepository,
     normalize_front,
 )
+from spacedbro.clock import FrozenClock
 
-# --- Frozen clock (BON-27 injectable clock; tests never use the wall clock) ---
-
-NOW = datetime(2026, 8, 21, 12, 0, 0, tzinfo=timezone.utc)
-
-
-class _FrozenClock:
-    def __init__(self, now: datetime) -> None:
-        self._now = now
-
-    def utc_now(self) -> datetime:
-        return self._now
-
-
-@pytest.fixture
-def session() -> Session:
-    """In-memory SQLite session with the full schema (migration-built DDL
-    lives in the migration; here we build from the shared metadata)."""
-    from spacedbro.db.engine import create_db_engine
-
-    engine = create_db_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    with Session(engine, expire_on_commit=False) as s:
-        yield s
-    engine.dispose()
-
-
-@pytest.fixture
-def clock() -> _FrozenClock:
-    return _FrozenClock(NOW)
-
-
-@pytest.fixture
-def users(session: Session, clock: _FrozenClock) -> UserRepository:
-    return UserRepository(session, clock)
-
-
-@pytest.fixture
-def items(session: Session, clock: _FrozenClock) -> ItemRepository:
-    return ItemRepository(session, clock)
+from .repo_fixtures import NOW  # noqa: E402
+from .repo_fixtures import clock, items, session, users  # noqa: F401  (fixtures)
 
 
 @pytest.fixture
@@ -260,6 +223,25 @@ def test_proactive_under_cap(session: Session, users: UserRepository) -> None:
     assert users.proactive_under_cap(uid, cap=3) is True
     # Unknown user: under cap (nothing sent yet).
     assert users.proactive_under_cap(uid + 1, cap=1) is True
+
+
+def test_proactive_count_today_reads_rolled_over_counter(
+    session: Session, users: UserRepository
+) -> None:
+    """The scheduler's read seam (BON-33): today's count, 0 on a new UTC
+    date — the same rollover rule as record_proactive, one home."""
+    uid = users.get_or_create(1)
+    assert users.proactive_count_today(uid) == 0  # fresh profile
+
+    users.record_proactive(uid)
+    users.record_proactive(uid)
+    assert users.proactive_count_today(uid) == 2
+    assert users.proactive_count_today(uid, now=NOW + timedelta(hours=3)) == 2
+
+    next_day = NOW + timedelta(days=1, hours=-1)  # UTC date rolled over
+    assert users.proactive_count_today(uid, now=next_day) == 0
+    # Unknown user: 0.
+    assert users.proactive_count_today(uid + 1) == 0
 
 
 # --- Items repository --------------------------------------------------------

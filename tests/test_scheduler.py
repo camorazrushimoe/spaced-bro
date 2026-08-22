@@ -33,8 +33,6 @@ from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy.orm import Session
 
 from spacedbro.clock import FrozenClock
-from spacedbro.db.base import Base
-from spacedbro.db.engine import create_db_engine
 from spacedbro.db.models import User
 from spacedbro.db.repositories import ItemRepository, UserRepository
 from spacedbro.scheduler import (
@@ -58,16 +56,18 @@ from spacedbro.scheduler import ProactiveStats
 
 UTC = timezone.utc
 
-#: The frozen "now" of the pass tests — 2026-08-22 12:00 UTC.
-NOW = datetime(2026, 8, 22, 12, 0, 0, tzinfo=UTC)
+from .repo_fixtures import NOW, clock, items, session, users  # noqa: E402,F401
 
 
 # --- APScheduler plumbing (BON-27 acceptance: in-process APScheduler) -------
 
-
 def test_build_scheduler_returns_asyncio_scheduler_in_utc() -> None:
     clock = FrozenClock(NOW)
-    scheduler = build_scheduler(clock)
+    sender = _Sender()
+    factory = lambda: Session()  # noqa: E731 - wiring is not executed here
+    scheduler = build_scheduler(
+        clock, sender=sender, session_factory=factory
+    )
 
     assert isinstance(scheduler, AsyncIOScheduler)
     assert scheduler.timezone is not None
@@ -76,14 +76,17 @@ def test_build_scheduler_returns_asyncio_scheduler_in_utc() -> None:
 
 def test_build_scheduler_registers_proactive_tick_job() -> None:
     clock = FrozenClock(NOW)
-    scheduler = build_scheduler(clock)
+    sender = _Sender()
+    factory = lambda: Session()  # noqa: E731 - wiring is not executed here
+    scheduler = build_scheduler(clock, sender=sender, session_factory=factory)
 
     job = scheduler.get_job("proactive-tick")
     assert job is not None
     assert job.func is _proactive_tick
     # The frozen clock is the first positional argument; the rest wire the
-    # pass (sender / session factory / dry-run), defaulted to no-op.
+    # pass (sender / session factory / dry-run).
     assert tuple(job.args)[0] is clock
+    assert tuple(job.args)[1] is sender
     # build_scheduler must not start the loop itself — __main__ owns the
     # migrate -> scheduler.start() boot order.
     assert not scheduler.running
@@ -91,7 +94,9 @@ def test_build_scheduler_registers_proactive_tick_job() -> None:
 
 def test_proactive_tick_uses_interval_trigger_in_utc() -> None:
     clock = FrozenClock(NOW)
-    scheduler = build_scheduler(clock)
+    sender = _Sender()
+    factory = lambda: Session()  # noqa: E731 - wiring is not executed here
+    scheduler = build_scheduler(clock, sender=sender, session_factory=factory)
     job = scheduler.get_job("proactive-tick")
 
     assert isinstance(job.trigger, IntervalTrigger)
@@ -102,7 +107,11 @@ def test_proactive_tick_uses_interval_trigger_in_utc() -> None:
 
 def test_custom_interval_is_respected() -> None:
     clock = FrozenClock(NOW)
-    scheduler = build_scheduler(clock, interval_minutes=30)
+    sender = _Sender()
+    factory = lambda: Session()  # noqa: E731 - wiring is not executed here
+    scheduler = build_scheduler(
+        clock, interval_minutes=30, sender=sender, session_factory=factory
+    )
     job = scheduler.get_job("proactive-tick")
 
     assert job.trigger.interval == timedelta(minutes=30)
@@ -220,7 +229,7 @@ def test_decide_allows_healthy_user_in_window_under_cap() -> None:
     decision = decide_proactive(
         last_active_at=NOW - timedelta(hours=2),
         buckets=_hot_buckets(12),
-        count_today=1,
+        proactive_count_today=1,
         now=NOW,
     )
 
@@ -232,7 +241,7 @@ def test_decide_back_off_skips_inactive_user() -> None:
     decision = decide_proactive(
         last_active_at=NOW - timedelta(days=15),
         buckets=_hot_buckets(12),
-        count_today=0,
+        proactive_count_today=0,
         now=NOW,
     )
 
@@ -245,7 +254,7 @@ def test_decide_cap_reached_blocks_until_next_utc_date() -> None:
     decision = decide_proactive(
         last_active_at=NOW - timedelta(hours=1),
         buckets=_hot_buckets(12),
-        count_today=3,
+        proactive_count_today=3,
         now=NOW,
     )
 
@@ -257,7 +266,7 @@ def test_decide_one_under_cap_still_allowed() -> None:
     decision = decide_proactive(
         last_active_at=NOW - timedelta(hours=1),
         buckets=_hot_buckets(12),
-        count_today=2,
+        proactive_count_today=2,
         now=NOW,
     )
 
@@ -269,8 +278,8 @@ def test_decide_outside_active_window_blocks() -> None:
     decision = decide_proactive(
         last_active_at=NOW - timedelta(hours=1),
         buckets=_hot_buckets(12),
-        count_today=0,
-        now=datetime(2026, 8, 22, 15, 0, tzinfo=UTC),
+        proactive_count_today=0,
+        now=NOW + timedelta(hours=3),
     )
 
     assert not decision.allowed
@@ -279,10 +288,10 @@ def test_decide_outside_active_window_blocks() -> None:
 
 def test_decide_cold_start_only_within_09_21_utc() -> None:
     cold = [0] * 24
-    assert decide_proactive(last_active_at=NOW, buckets=cold, count_today=0, now=datetime(2026, 8, 22, 8, 59, tzinfo=UTC)).allowed is False
-    assert decide_proactive(last_active_at=NOW, buckets=cold, count_today=0, now=datetime(2026, 8, 22, 9, 0, tzinfo=UTC)).allowed is True
-    assert decide_proactive(last_active_at=NOW, buckets=cold, count_today=0, now=datetime(2026, 8, 22, 20, 59, tzinfo=UTC)).allowed is True
-    assert decide_proactive(last_active_at=NOW, buckets=cold, count_today=0, now=datetime(2026, 8, 22, 21, 0, tzinfo=UTC)).allowed is False
+    assert decide_proactive(last_active_at=NOW, buckets=cold, proactive_count_today=0, now=NOW - timedelta(hours=3, minutes=1)).allowed is False
+    assert decide_proactive(last_active_at=NOW, buckets=cold, proactive_count_today=0, now=NOW - timedelta(hours=3)).allowed is True
+    assert decide_proactive(last_active_at=NOW, buckets=cold, proactive_count_today=0, now=NOW + timedelta(hours=8, minutes=59)).allowed is True
+    assert decide_proactive(last_active_at=NOW, buckets=cold, proactive_count_today=0, now=NOW + timedelta(hours=9)).allowed is False
 
 
 # --- run_proactive_pass: real repositories + frozen clock ---------------------
@@ -299,30 +308,6 @@ class _Sender:
         if telegram_id in self.fail_for:
             raise RuntimeError("telegram down")
         self.sent.append((telegram_id, text))
-
-
-@pytest.fixture
-def session() -> Session:
-    engine = create_db_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    with Session(engine, expire_on_commit=False) as s:
-        yield s
-    engine.dispose()
-
-
-@pytest.fixture
-def clock() -> FrozenClock:
-    return FrozenClock(NOW)
-
-
-@pytest.fixture
-def users(session: Session, clock: FrozenClock) -> UserRepository:
-    return UserRepository(session, clock)
-
-
-@pytest.fixture
-def items(session: Session, clock: FrozenClock) -> ItemRepository:
-    return ItemRepository(session, clock)
 
 
 def _seed_user(
@@ -470,7 +455,7 @@ async def test_pass_cap_resets_at_utc_midnight(
         104,
         buckets=_hot_buckets(12),
         count=3,
-        count_date=date(2026, 8, 21),  # cap spent YESTERDAY
+        count_date=NOW.date() - timedelta(days=1),  # cap spent YESTERDAY
     )
     _seed_due_item(items, uid)
     sender = _Sender()
@@ -512,7 +497,7 @@ async def test_pass_skips_user_outside_active_window(
     users: UserRepository,
     items: ItemRepository,
 ) -> None:
-    late = FrozenClock(datetime(2026, 8, 22, 15, 0, tzinfo=UTC))  # window {11,12,13}
+    late = FrozenClock(NOW + timedelta(hours=3))  # window {11,12,13}
     uid = _seed_user(users, session, late, 106, buckets=_hot_buckets(12))
     _seed_due_item(items, uid)
     sender = _Sender()
@@ -528,7 +513,7 @@ async def test_pass_cold_start_respects_09_21_window(
     users: UserRepository,
     items: ItemRepository,
 ) -> None:
-    late = FrozenClock(datetime(2026, 8, 22, 22, 0, tzinfo=UTC))
+    late = FrozenClock(NOW + timedelta(hours=10))
     uid = _seed_user(users, session, late, 107)  # zero histogram -> cold start
     _seed_due_item(items, uid)
     sender = _Sender()
@@ -691,7 +676,7 @@ async def test_tick_runs_the_pass_with_fresh_session(
     sender = _Sender()
     factory = lambda: Session(session.bind, expire_on_commit=False)  # noqa: E731
 
-    await _proactive_tick(clock, sender, factory)
+    await _proactive_tick(clock, sender, factory, dry_run=False)
 
     assert [t for t, _ in sender.sent] == [601]
     user = session.get(User, uid)
@@ -699,9 +684,20 @@ async def test_tick_runs_the_pass_with_fresh_session(
     assert user.proactive_count == 1
 
 
-async def test_tick_without_wiring_is_a_no_op() -> None:
-    clock = FrozenClock(NOW)
+async def test_tick_dry_run_runs_pass_but_sends_nothing(
+    session: Session,
+    clock: FrozenClock,
+    users: UserRepository,
+    items: ItemRepository,
+) -> None:
+    uid = _seed_user(users, session, clock, 602, buckets=_hot_buckets(12))
+    _seed_due_item(items, uid)
+    sender = _Sender()
+    factory = lambda: Session(session.bind, expire_on_commit=False)  # noqa: E731
 
-    # Pre-BON-33 behaviour (no sender / session factory): must not raise.
-    await _proactive_tick(clock, None, None)
-    await _proactive_tick(clock, None, None, True)
+    await _proactive_tick(clock, sender, factory, dry_run=True)
+
+    assert sender.sent == []  # dry run: nothing sent, nothing counted
+    user = session.get(User, uid)
+    assert user is not None
+    assert user.proactive_count == 0
