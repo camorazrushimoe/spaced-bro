@@ -84,6 +84,10 @@ class UserRepository:
         stmt = select(User.id).where(User.telegram_id == telegram_id)
         return self.session.execute(stmt).scalar_one_or_none()
 
+    def profile(self, telegram_id: int) -> Optional[User]:
+        """The full profile row for a Telegram user, or ``None``."""
+        return self.session.scalar(select(User).where(User.telegram_id == telegram_id))
+
     def get_or_create(self, telegram_id: int, now: Optional[datetime] = None) -> int:
         """Return the user id for ``telegram_id``, creating the profile on
         first interaction.
@@ -136,6 +140,16 @@ class UserRepository:
     def set_level_estimate(self, user_id: int, level: str) -> None:
         user = self._get_or_raise(user_id)
         user.level_estimate = level
+        self.session.commit()
+
+    def mark_onboarding_asked(self, user_id: int) -> None:
+        """Remember that the onboarding target-language question was answered.
+
+        telegram-bot spec "Start command": the bot asks the target language
+        **once**; this flag is what makes later ``/start`` a plain welcome.
+        """
+        user = self._get_or_raise(user_id)
+        user.onboarding_asked = True
         self.session.commit()
 
     def update_last_active(self, user_id: int, now: Optional[datetime] = None) -> None:

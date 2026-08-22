@@ -41,6 +41,7 @@ EXPECTED_USERS_COLUMNS = {
     "activity_hours_utc",
     "proactive_count",
     "proactive_count_date",
+    "onboarding_asked",
 }
 EXPECTED_ITEMS_COLUMNS = {
     "id",
@@ -101,10 +102,10 @@ def _indexes(db_file: Path, table: str) -> list[tuple[str, list[str], bool]]:
     return out
 
 
-def test_migrations_stamp_0002_on_fresh_db(migrated_db: Path) -> None:
+def test_migrations_stamp_0003_on_fresh_db(migrated_db: Path) -> None:
     with sqlite3.connect(migrated_db) as conn:
         versions = conn.execute("SELECT version_num FROM alembic_version").fetchall()
-    assert versions == [("0002",)]
+    assert versions == [("0003",)]
 
 
 def test_users_table_matches_design_sketch(migrated_db: Path) -> None:
@@ -127,6 +128,13 @@ def test_users_defaults(migrated_db: Path) -> None:
     assert "target_lang" in cols
     assert "'ru'" in ddl or '"ru"' in ddl, "native_lang DEFAULT 'ru' missing"
     assert "'en'" in ddl or '"en"' in ddl, "target_lang DEFAULT 'en' missing"
+    # onboarding_asked arrives via ALTER (migration 0003) — the stored CREATE
+    # statement is not rewritten, so its default is checked via PRAGMA.
+    with sqlite3.connect(migrated_db) as conn:
+        pragma_rows = conn.execute("PRAGMA table_info(users)").fetchall()
+    col = next(r for r in pragma_rows if r[1] == "onboarding_asked")
+    assert col[3] == 1, "onboarding_asked must be NOT NULL"
+    assert str(col[4]) == "0", "onboarding_asked DEFAULT 0 missing"
 
 
 def test_learning_items_new_state_defaults(migrated_db: Path) -> None:
@@ -188,7 +196,7 @@ def test_migration_idempotent_on_upgrade(migrated_db: Path) -> None:
 
     with sqlite3.connect(migrated_db) as conn:
         versions = conn.execute("SELECT version_num FROM alembic_version").fetchall()
-    assert versions == [("0002",)]
+    assert versions == [("0003",)]
     assert set(_columns(migrated_db, "users")) == EXPECTED_USERS_COLUMNS
 
 
@@ -215,7 +223,7 @@ def test_downgrade_and_upgrade_roundtrip(tmp_path: Path) -> None:
         command.upgrade(ini, "head")
         with sqlite3.connect(db_file) as conn:
             versions = conn.execute("SELECT version_num FROM alembic_version").fetchall()
-        assert versions == [("0002",)]
+        assert versions == [("0003",)]
         assert set(_columns(db_file, "learning_items")) == EXPECTED_ITEMS_COLUMNS
     finally:
         if original_url is not None:
@@ -224,13 +232,13 @@ def test_downgrade_and_upgrade_roundtrip(tmp_path: Path) -> None:
             os.environ.pop("DATABASE_URL", None)
 
 
-def test_head_is_0002() -> None:
+def test_head_is_0003() -> None:
     ini = Config(str(REPO_ROOT / "alembic.ini"))
     ini.set_main_option("sqlalchemy.url", "sqlite://")
     from alembic.script import ScriptDirectory
 
     script = ScriptDirectory.from_config(ini)
-    assert script.get_current_head() == "0002"
+    assert script.get_current_head() == "0003"
 
 
 def test_orm_metadata_matches_migration(tmp_path: Path) -> None:
