@@ -79,6 +79,10 @@ class UserRepository:
         """The profile for ``user_id``, or ``None``."""
         return self.session.get(User, user_id)
 
+    def all(self) -> list[User]:
+        """Every user profile (the scheduler's proactive pass iterates this)."""
+        return list(self.session.execute(select(User)).scalars())
+
     def get_by_telegram_id(self, telegram_id: int) -> Optional[int]:
         """Internal user id for a Telegram user, or ``None``."""
         stmt = select(User.id).where(User.telegram_id == telegram_id)

@@ -154,6 +154,17 @@ def test_get_by_telegram_id(session: Session, users: UserRepository) -> None:
     assert users.get_by_telegram_id(778) is None
 
 
+def test_all_returns_every_profile(session: Session, users: UserRepository) -> None:
+    # The scheduler's proactive pass iterates this (BON-33).
+    assert users.all() == []
+    uid_a = users.get_or_create(101)
+    uid_b = users.get_or_create(202)
+
+    all_rows = users.all()
+    assert {u.id for u in all_rows} == {uid_a, uid_b}
+    assert all_rows
+
+
 def test_set_target_lang(session: Session, users: UserRepository) -> None:
     uid = users.get_or_create(1)
     users.set_target_lang(uid, "de")
