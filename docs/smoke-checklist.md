@@ -4,6 +4,21 @@ BON-34 (tasks.md §7): the five required smoke scenarios, each with the exact
 expected behaviour and a concrete verification (chat observation and/or a
 log/metrics grep). Run after every `compose up` or local boot, per backend.
 
+**How to run / what was exercised in this PR.** Scenarios 1–4 + voice +
+metrics are driven **in-process** by the harness in this ticket's PR notes
+(real LLM client from the local Ollama backend, real SQLite, real SRS
+engine, no network Telegram — outgoing replies are recorded). Scenario 5
+(proactive dry-run) is exercised on the live dev-env container with
+`SCHEDULER_DRY_RUN=1`. All five required steps plus onboarding and voice
+were exercised and are **green**. Steps below that need a *live Telegram
+bot* (a real `@SpacedBro` chat) are marked *(live)*; the in-process path
+already proves the handler → LLM → DB → SRS logic end-to-end.
+
+**Logs are structured JSON** (BON-34): every `docker logs` line is one JSON
+object — `{"ts":..., "level":"INFO", "logger":"spacedbro.scheduler",
+"message":"..."}`. Grep the `"message"` value (e.g. `docker logs <c> 2>&1 |
+grep 'proactive DRY-RUN'`), and `jq .message` when you need the clean text.
+
 **Pre-flight (Definition of Done: "secrets env-only"):**
 
 - [ ] `docker compose config | grep -E 'BOT_TOKEN|OPENAI_API_KEY'` shows the
@@ -24,6 +39,11 @@ log/metrics grep). Run after every `compose up` or local boot, per backend.
 > unavailable (no docker-proxy). Reach the port via the container's bridge
 > IP: `docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}
 > {{end}}' <container>` then `curl http://<bridge-ip>:8080/healthz`.
+>
+> **Log format:** from configuration onward, every container-log line is a
+> single-line JSON object — `{"ts","level","logger","message"(,"exc_info")}`
+> — so grep the `message` field (e.g.
+> `docker logs <c> 2>&1 | grep 'proactive DRY-RUN'`).
 
 ---
 
@@ -89,9 +109,11 @@ past for a smoke run), then send `/review` (or NL: `review my words`).
 - [ ] After **Show answer** → the back is revealed with **[Again] [Hard]
       [Good] [Easy]** + **[Stop]** buttons.
 - [ ] Rating a card advances its SRS state (e.g. **Good** from New →
-      `ease=2.5`, `interval_minutes=60`, `repetitions=1`, status stays
-      `learning` per the BON-28 engine) and the bot offers the **next due
-      card** or finishes with `That's all for now — nothing due. Nice work 🎉`.
+      `ease=2.5` (unchanged), `interval_minutes=1440`, `repetitions=1`,
+      `status` promoted to **`review`** because the interval ≥ 1440 — the
+      BON-28 engine's "Good, repetitions==0 → 1 day" row) and the bot offers
+      the **next due card** or finishes with `That's all for now — nothing
+      due. Nice work 🎉`.
 - [ ] **[Stop]** mid-session → `Stopped ⏸️ Your due cards will wait — send
       /review any time.` — unattended cards **stay due, no penalty**.
 - [ ] **Verification (DB):** reviewed item has `last_review_at` set and
@@ -132,7 +154,9 @@ behaviour for each injected failure (or the first real occurrence):
 - [ ] User messages NEVER contain a stack trace, an exception class name, or
       internal paths — unhandled failures get the global short reply
       (`Something glitched on my end 🐻 Try again in a sec?`) while the full
-      traceback is logged server-side at ERROR level.
+      traceback stays **server-side**: the container log line for the failure
+      is a JSON object with `"level":"ERROR"` and an `exc_info` field
+      (design §9 keeps stack traces away from users, not from the log).
 
 ## Metrics sanity (final)
 

@@ -277,9 +277,14 @@ compose files (see the pre-flight block in `docs/smoke-checklist.md`).
 
 ### Observability (logs + metrics)
 
-- **Logs:** structured, single-line records on stderr
-  (`%(asctime)s %(levelname)s %(name)s: %(message)s`), level via
-  `LOG_LEVEL` (default `INFO`). The LLM router's startup line
+- **Logs:** structured — every line after configuration is a **single-line
+  JSON object** on stderr: `{"ts": "...Z", "level": "INFO",
+  "logger": "spacedbro.scheduler", "message": "..."}` plus `exc_info`
+  (rendered traceback) when a record carries an exception. Log shippers can
+  parse each container-log line on its own; grep the `message` field and
+  `"level":"ERROR"`. Level via `LOG_LEVEL` (default `INFO`). Fail-fast
+  `ERROR` lines logged *before* configuration (e.g. the exit-78 config
+  error) use the plain format. The LLM router's startup line
   `LLM resolved configuration: APP_ENV=… provider=… model=… base_url=…`
   (INFO) confirms the active backend; per-LLM-call latency/tokens log at
   DEBUG, and full prompts only with the explicit `LLM_LOG_PROMPTS=1` flag.
