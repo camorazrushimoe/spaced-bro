@@ -75,6 +75,10 @@ ONBOARDING_QUESTION = (
     "Quick one: which language are we learning?\n"
     "Reply with a name (en, de, es, fr, …)"
 )
+ONBOARDING_REASK = (
+    "That one's not a language I know 🤔\n"
+    "Reply with a code (en, de, es, fr, …) — or just say Skip."
+)
 ONBOARDING_DEFAULTED = (
     "No problem — going with <b>English</b> \U0001F1EC\U0001F1E7\n"
     "Send me a word or a photo to get started!"
@@ -260,12 +264,63 @@ def _friendly_llm_error(exc: LLMError) -> str:
     return RETRY_GENERIC
 
 
+#: Language codes the bot knows (free-text onboarding answers).
+_LANG_CODES = frozenset(
+    {
+        "en", "es", "fr", "de", "it", "pt", "nl", "pl", "sv", "da", "no",
+        "fi", "cs", "hu", "ro", "tr", "ru", "uk", "ja", "ko", "zh", "he",
+        "ar", "hi", "el", "fa",
+    }
+)
+
+#: Language names → code (what users actually type).
+_LANG_NAME_TO_CODE = {
+    "english": "en",
+    "spanish": "es", "español": "es",
+    "french": "fr", "français": "fr",
+    "german": "de", "deutsch": "de",
+    "italian": "it", "italiano": "it",
+    "portuguese": "pt",
+    "dutch": "nl",
+    "polish": "pl",
+    "swedish": "sv",
+    "danish": "da",
+    "norwegian": "no",
+    "finnish": "fi",
+    "czech": "cs",
+    "hungarian": "hu",
+    "romanian": "ro",
+    "turkish": "tr",
+    "russian": "ru",
+    "ukrainian": "uk",
+    "japanese": "ja",
+    "korean": "ko",
+    "chinese": "zh",
+    "hebrew": "he",
+    "arabic": "ar",
+    "hindi": "hi",
+    "greek": "el",
+    "persian": "fa",
+}
+
+
 def _parse_lang_code(text: str) -> str | None:
-    """A 2–3 letter language code (en, de, …); None when unparseable."""
-    token = " ".join(text.casefold().split()).strip(".!?")
-    if len(token) < 2 or len(token) > 3 or not token.isalpha():
-        return None
-    return token
+    """Free-text onboarding answer → known language code, or ``None``.
+
+    Only **known** codes (``en``, ``de``, …) and names (``english``,
+    ``deutsch``, …) are accepted — a word that merely looks like a code
+    (``cat``) is NOT a language answer, so a first word to learn can never
+    be misfiled as the target language (design §4: onboarding asks the
+    target language once, default ``en``).
+    """
+    # The first word carries the answer ("German please!" → "german").
+    words = " ".join(text.casefold().split()).strip(".!?").split()
+    token = words[0] if words else ""
+    if token in _LANG_NAME_TO_CODE:
+        return _LANG_NAME_TO_CODE[token]
+    if token in _LANG_CODES:
+        return token
+    return None
 
 
 def _ensure_profile(users: UserRepository, clock: Clock, tg_id: int) -> tuple[User, bool]:
@@ -348,10 +403,11 @@ async def handle_text(
     tg_id = message.from_user.id
     user, _ = _ensure_profile(users, clock, tg_id)
 
-    # Onboarding answer (asked once — never again, design §4).
+    # Onboarding answer (asked once — never again, design §4). The
+    # pending flag is popped inside _answer_onboarding only when the
+    # question is resolved, so a re-ask still routes here.
     if store.get(tg_id, "pending_lang"):
-        store.pop(tg_id, "pending_lang")
-        await _answer_onboarding(message, users, user, message.text)
+        await _answer_onboarding(message, users, user, store, message.text)
         return
 
     try:
@@ -496,20 +552,34 @@ async def _answer_onboarding(
     message: types.Message,
     users: UserRepository,
     user: User,
+    store: ContextStore,
     reply_text: str,
 ) -> None:
     """Resolve the once-only target-language question (design §4).
 
-    A parseable 2–3 letter code sets it; anything else (including "skip")
-    keeps the default ``en`` — "default English if skipped".
+    A known language (code or name) sets it; an unrecognisable answer
+    (``cat`` — a word to learn, not a language) gets ONE short re-ask,
+    after which the default ``en`` applies ("default English if skipped").
+    The question is never asked more than twice in total.
     """
+    reasked = store.get(message.from_user.id, "onboard_reasked")
     code = _parse_lang_code(reply_text)
-    if code is None:
-        users.set_target_lang(user.id, "en")
-        await message.answer(ONBOARDING_DEFAULTED)
+    if code is not None:
+        users.set_target_lang(user.id, code)
+        store.pop(message.from_user.id, "pending_lang")
+        store.pop(message.from_user.id, "onboard_reasked")
+        await message.answer(LANG_CONFIRM.format(target=_esc(code)))
         return
-    users.set_target_lang(user.id, code)
-    await message.answer(LANG_CONFIRM.format(target=_esc(code)))
+    if not reasked:
+        # Keep "pending_lang" set: the next text message is still the
+        # answer (the question was not yet resolved).
+        store.set(message.from_user.id, "onboard_reasked", True)
+        await message.answer(ONBOARDING_REASK)
+        return
+    users.set_target_lang(user.id, "en")
+    store.pop(message.from_user.id, "pending_lang")
+    store.pop(message.from_user.id, "onboard_reasked")
+    await message.answer(ONBOARDING_DEFAULTED)
 
 
 async def _handle_lang(

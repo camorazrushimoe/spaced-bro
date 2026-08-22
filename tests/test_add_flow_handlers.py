@@ -31,7 +31,9 @@ from spacedbro.bot.handlers import (
     SAVED,
     BOOST_APPLIED,
     DUPLICATE_LINE,
+    ONBOARDING_DEFAULTED,
     ONBOARDING_QUESTION,
+    ONBOARDING_REASK,
     SKIPPED,
     VOICE_REPLY,
     handle_callback,
@@ -181,11 +183,50 @@ async def test_onboarding_text_answer_sets_target_lang(session, fake_llm, record
     assert all(ONBOARDING_QUESTION not in s["text"] for s in record_answers["sent"])
 
 
-async def test_onboarding_unparseable_defaults_english(session, fake_llm, record_answers):
+async def test_onboarding_unparseable_reasks_once_then_defaults_english(
+    session, fake_llm, record_answers
+):
+    """Non-language text → one short re-ask, then default en (design §4:
+    the question is asked once; 'default English if skipped')."""
     deps = make_deps(session, fake_llm)
     await handle_start(make_message(text="/start"), **deps)
     await handle_text(make_message(text="hmm not sure", message_id=2), **deps)
+
+    # First unrecognisable answer: re-asked, not defaulted, not a language.
+    assert ONBOARDING_REASK in record_answers["sent"][-1]["text"]
+    assert get_user(session).target_lang == "en"  # default held until answered
+
+    # Second unrecognisable answer: default en, question over.
+    record_answers["sent"].clear()
+    await handle_text(make_message(text="whatever else", message_id=3), **deps)
     assert get_user(session).target_lang == "en"
+    assert any(ONBOARDING_DEFAULTED in t["text"] for t in record_answers["sent"])
+    assert all(ONBOARDING_REASK not in t["text"] for t in record_answers["sent"])
+
+
+async def test_onboarding_word_to_learn_not_misfiled_as_language(
+    session, fake_llm, record_answers
+):
+    """A word that merely looks like a code ('cat') is not a language
+    answer — the user keeps the chance to answer, then a real code lands."""
+    deps = make_deps(session, fake_llm)
+    await handle_start(make_message(text="/start"), **deps)
+    await handle_text(make_message(text="cat", message_id=2), **deps)
+    assert get_user(session).target_lang == "en"  # not 'cat'
+    assert ONBOARDING_REASK in record_answers["sent"][-1]["text"]
+
+    record_answers["sent"].clear()
+    await handle_text(make_message(text="de", message_id=3), **deps)
+    assert get_user(session).target_lang == "de"
+
+
+async def test_onboarding_language_name_maps_to_code(
+    session, fake_llm, record_answers
+):
+    deps = make_deps(session, fake_llm)
+    await handle_start(make_message(text="/start"), **deps)
+    await handle_text(make_message(text="German please!", message_id=2), **deps)
+    assert get_user(session).target_lang == "de"
 
 
 async def test_onboarding_lang_button_skip_keeps_default(session, fake_llm, record_answers):
