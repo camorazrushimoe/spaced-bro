@@ -22,6 +22,7 @@ from enum import Enum
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     Date,
     Float,
     ForeignKey,
@@ -109,6 +110,11 @@ class User(Base):
     )
     proactive_count_date: Mapped[date | None] = mapped_column(
         Date, nullable=True
+    )
+    #: Whether the onboarding target-language question has been answered
+    #: (telegram-bot "Start command": ask target language **once**).
+    onboarding_asked: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=sa_text("0")
     )
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid

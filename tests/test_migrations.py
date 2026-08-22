@@ -61,16 +61,16 @@ def _stamped_versions(db_file: Path) -> list[tuple[str]]:
         return conn.execute("SELECT version_num FROM alembic_version").fetchall()
 
 
-def test_run_migrations_stamps_head_0002(tmp_path: Path, run_migrations_isolated) -> None:
-    """BON-29: a fresh DB migrates from the 0001 baseline to head (0002),
-    creating users + learning_items."""
+def test_run_migrations_stamps_head_0003(tmp_path: Path, run_migrations_isolated) -> None:
+    """BON-29: a fresh DB migrates from the 0001 baseline to head (0003),
+    creating users + learning_items (plus the onboarding marker, BON-31)."""
     db_file = tmp_path / "spacedbro.db"
     database_url = f"sqlite:///{db_file}"
 
     run_migrations_isolated(database_url)
 
     assert db_file.exists()
-    assert _stamped_versions(db_file) == [("0002",)]
+    assert _stamped_versions(db_file) == [("0003",)]
     with sqlite3.connect(db_file) as conn:
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert "users" in tables
@@ -85,4 +85,4 @@ def test_run_migrations_is_idempotent(tmp_path: Path, run_migrations_isolated) -
     run_migrations_isolated(database_url)
     run_migrations_isolated(database_url)
 
-    assert _stamped_versions(db_file) == [("0002",)]
+    assert _stamped_versions(db_file) == [("0003",)]

@@ -72,7 +72,7 @@ async def _run() -> None:
     )
 
     # 5. Telegram long polling — blocks until the process is stopped.
-    bot = build_bot(settings.bot_token, llm_client)
+    bot = build_bot(settings.bot_token, llm_client, settings.database_url, clock)
     try:
         await bot.run()
     except TelegramUnauthorizedError as exc:
