@@ -476,8 +476,9 @@ class LLMClient(Protocol):
     def _jittered_delay(self, attempt: int) -> float:
         # ``attempt`` = zero-based retry index; the 10s cap is applied
         # inside _full_jitter_delay (pinned policy: base=1s, cap=10s).
-        # Called with one argument so tests can monkeypatch the function.
-        return _full_jitter_delay(_BACKOFF_BASE_SECONDS * (2**attempt))
+        # The *injected* random is consulted so backoff is deterministic
+        # under a seeded/pinned ``random`` seam (tests).
+        return _full_jitter_delay(_BACKOFF_BASE_SECONDS * (2**attempt), self._random)
 
     # --- Request / response shapes ------------------------------------------------
 

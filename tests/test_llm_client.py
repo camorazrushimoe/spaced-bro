@@ -88,6 +88,22 @@ class ConnectionRefused(Exception):
     """Stand-in for a connection-level transport failure (refused/DNS)."""
 
 
+class _FixedRandom:
+    """Stand-in for the ``random`` module: always returns a pinned jitter.
+
+    Lets a test prove the client consults the *injected* ``random`` for its
+    backoff jitter (deterministic seam) rather than the global module.
+    """
+
+    def __init__(self, value: float) -> None:
+        self.value = value
+        self.uniform_calls: list[tuple[float, float]] = []
+
+    def uniform(self, a: float, b: float) -> float:
+        self.uniform_calls.append((a, b))
+        return self.value
+
+
 # --- Helpers -------------------------------------------------------------------
 
 
@@ -315,7 +331,7 @@ async def test_backoff_respects_cap_at_higher_attempts(monkeypatch) -> None:
 
     delays = []
 
-    def fake_jitter(delay: float) -> float:
+    def fake_jitter(delay, random=None):
         delays.append(delay)
         return delay  # degenerate "jitter" = the cap itself (worst case)
 
@@ -528,6 +544,31 @@ async def test_structured_output_wrong_type_raises_invalid_response() -> None:
         await client.complete(
             _messages(), response_format=ResponseFormat(schema=CANDIDATES_SCHEMA)
         )
+
+
+async def test_injected_random_is_used_for_backoff_jitter() -> None:
+    # The client must consult the *injected* random for its backoff jitter
+    # (deterministic seam), not the global random module.
+    transport = StubTransport(
+        [StubResponse(500, body="boom"), StubResponse(200, body=ok_body("ok"))]
+    )
+    clock = FrozenClock(_T0)
+    fixed = _FixedRandom(0.25)
+    client = LLMClient(
+        settings=make_settings(max_retries=1),
+        transport=transport,
+        clock=clock,
+        random=fixed,
+    )
+
+    await client.complete(_messages())
+
+    assert len(fixed.uniform_calls) == 1
+    low, high = fixed.uniform_calls[0]
+    assert low == 0.0
+    assert high == 1.0  # attempt 0: cap = min(10, 1 * 2^0) = 1s
+    assert clock.waits == [0.25]
+    assert len(transport.calls) == 2
 
 
 # --- Observability -----------------------------------------------------------------
