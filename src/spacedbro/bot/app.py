@@ -28,6 +28,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: Global friendly error fallback (design §9: "no stack traces to
+#: users") — one short line for any unhandled failure.
+GLOBAL_ERROR_REPLY = "Something glitched on my end \U0001F41B Try again in a sec?"
+
 
 class BotApplication:
     """Owns the aiogram bot and dispatcher and runs long polling."""
@@ -66,13 +70,23 @@ class BotApplication:
         self._dispatcher.errors.register(self._on_error, ErrorEvent)
 
     async def _on_error(self, event: ErrorEvent) -> None:
-        """Global catch: log with context, never surface a stack trace."""
+        """Global friendly errors (design §9): log with context, and —
+        when the failed update carries a user message — answer it with a
+        short line. No exception ever escapes to the Telegram API and no
+        stack trace ever reaches the user.
+        """
         logger.error(
             "Unhandled error while processing update: %s: %s",
             type(event.exception).__name__,
             event.exception,
             exc_info=True,
         )
+        update = event.update
+        if update is not None and update.message is not None:
+            try:
+                await update.message.answer(GLOBAL_ERROR_REPLY)
+            except Exception:  # pragma: no cover - last-resort path
+                logger.exception("could not deliver the friendly error reply")
 
     async def run(self) -> None:
         logger.info("Starting Telegram long polling")

@@ -48,6 +48,29 @@ class Confirmation:
     key: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class ReviewSession:
+    """The in-progress on-demand review session (BON-32, design §7).
+
+    - ``total`` is the due count reported to the user ("bot reports how
+      many due", ``next_review_at <= now`` at session start).
+    - ``rated`` — ids of the cards already rated in this session, in
+      rating order.
+    - ``pending`` — the item id currently on screen awaiting its rating
+      (``0`` when nothing is pending).
+
+    The due queue itself is NOT copied into this state: after every
+    rating the next card is re-read from the database (the same due
+    query the scheduler uses — "proactive and on-demand share the same
+    due queue"). A card rated Again (due again in ~10 min) simply drops
+    out of the current pass; it stays due for later with no penalty.
+    """
+
+    total: int
+    rated: tuple[int, ...]
+    pending: int
+
+
 class ContextStore:
     """Per-Telegram-user, per-key state with TTL expiry.
 

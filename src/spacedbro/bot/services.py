@@ -21,8 +21,29 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from spacedbro.bot.state import Candidate
+from spacedbro.clock import Clock
+from spacedbro.db.models import User
+from spacedbro.db.repositories import UserRepository
 from spacedbro.llm.client import LLMClient, LLMResponse, Message, ResponseFormat
 from spacedbro.llm.errors import InvalidResponseError  # noqa: F401 (re-export)
+
+
+def ensure_profile(users: UserRepository, clock: Clock, tg_id: int) -> User:
+    """Return the user's profile row, creating it on first interaction.
+
+    Shared bootstrap used by every entry handler (add flow + review
+    session): the profile is created with spec defaults and the UTC
+    activity histogram + ``last_active_at`` are refreshed (design §4,
+    "any interaction counts").
+    """
+    user = users.profile(tg_id)
+    if user is None:
+        users.get_or_create(tg_id, clock.utc_now())
+        user = users.profile(tg_id)
+    if user is None:
+        raise RuntimeError(f"profile for telegram id {tg_id} missing after creation")
+    users.touch_activity(user.id, clock.utc_now())
+    return user
 
 
 #: The minimal LLM seam the services depend on. Production injects the

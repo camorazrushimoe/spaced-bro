@@ -21,7 +21,7 @@ from __future__ import annotations
 import uuid
 from typing import Optional
 
-# --- Actions (this ticket: the add flow) --------------------------------------
+# --- Actions (BON-31: the add flow; BON-32: the review session) -----------------
 
 ACTION_ADD = "add"
 ACTION_SAVE = "save"
@@ -29,8 +29,18 @@ ACTION_REGEN = "regen"
 ACTION_SKIP = "skip"
 ACTION_BOOST = "boost"
 ACTION_LANG = "lang"
+#: Review session (design §7): show the answer of the card on screen
+#: (payload: ``item_id``).
+ACTION_SHOW = "show"
+#: Review session: quality rating (payload: ``quality:item_id``, quality
+#: one of again/hard/good/easy — colons in the payload are fine, the
+#: parser takes the first segment as action and the last as callback id).
+ACTION_RATE = "rate"
+#: Review session: stop the session (payload: ``item_id`` of the card on
+#: screen). Unrated due cards stay due — no penalty (design §7).
+ACTION_STOP = "stop"
 
-#: Actions this ticket's callback handler understands.
+#: Actions the callback handler understands.
 ACTIONS = frozenset(
     {
         ACTION_ADD,
@@ -39,6 +49,9 @@ ACTIONS = frozenset(
         ACTION_SKIP,
         ACTION_BOOST,
         ACTION_LANG,
+        ACTION_SHOW,
+        ACTION_RATE,
+        ACTION_STOP,
     }
 )
 
