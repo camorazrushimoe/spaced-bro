@@ -26,6 +26,7 @@ from spacedbro.health import start_health_server
 from spacedbro.logging_config import configure_logging
 from spacedbro.llm.client import build_llm_client
 from spacedbro.llm.config import load_llm_settings
+from spacedbro.metrics import Metrics
 from spacedbro.migrations import run_migrations
 from spacedbro.scheduler import build_scheduler
 
@@ -59,15 +60,23 @@ async def _run() -> None:
 
     clock = UtcClock()
 
-    # 2. LLM client — constructed here and injected into the bot/handlers
-    #    (handlers never instantiate provider clients themselves).
-    llm_client = build_llm_client(llm_settings, clock=clock)
+    # 2. Metrics (BON-34, tasks.md §7): one process-wide object — the LLM
+    #    client records call counts, the health server serves /metrics
+    #    (item/user gauges refreshed from the bot's session factory).
+    metrics = Metrics()
 
-    # 3. Bot application — owns the repositories (the only persistent
+    # 3. LLM client — constructed here and injected into the bot/handlers
+    #    (handlers never instantiate provider clients themselves).
+    llm_client = build_llm_client(llm_settings, clock=clock, metrics=metrics)
+
+    # 4. Bot application — owns the repositories (the only persistent
     #    state, BON-29) and the proactive send seam (BON-33).
     app = build_bot(settings.bot_token, llm_client, settings.database_url, clock)
 
-    # 4. In-process scheduler (single instance, same process as the bot —
+    # Metrics gauges read the SAME SQLite the bot writes to.
+    metrics.bind_session_factory(app.session_factory)
+
+    # 5. In-process scheduler (single instance, same process as the bot —
     #    NO distributed lock in MVP; the operator MUST run one replica).
     #    The tick reads/writes the same SQLite the bot uses, through the
     #    app's session factory, and sends via the bot's send seam.
@@ -85,15 +94,17 @@ async def _run() -> None:
         settings.scheduler_dry_run,
     )
 
-    # 5. Health server (target of the container HEALTHCHECK).
+    # 6. Health server (target of the container HEALTHCHECK; serves
+    #    /healthz and the BON-34 /metrics endpoint).
     await start_health_server(
         settings.health_host,
         settings.health_port,
         settings.database_url,
         clock,
+        metrics=metrics,
     )
 
-    # 6. Telegram long polling — blocks until the process is stopped.
+    # 7. Telegram long polling — blocks until the process is stopped.
     try:
         await app.run()
     except TelegramUnauthorizedError as exc:

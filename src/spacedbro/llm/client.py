@@ -39,7 +39,7 @@ import os
 import random as _random_module
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Mapping, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Mapping, Protocol, runtime_checkable
 
 from spacedbro.clock import Clock, UtcClock
 from spacedbro.llm.config import LLMSettings
@@ -52,7 +52,14 @@ from spacedbro.llm.errors import (
     VisionNotSupportedError,
 )
 
+if TYPE_CHECKING:
+    from spacedbro.metrics import Metrics
+
 logger = logging.getLogger(__name__)
+
+#: LLM call kinds counted in metrics (mirrors ``spacedbro.metrics``).
+_KIND_TEXT = "text"
+_KIND_VISION = "vision"
 
 #: Backoff: exponential with full jitter, delay in [0, min(cap, base * 2^attempt)].
 _BACKOFF_BASE_SECONDS = 1.0
@@ -165,6 +172,7 @@ class LLMClient(Protocol):
     _url: str
     _headers: dict[str, str]
     _log_prompts: bool
+    _metrics: "Metrics | None"
 
     def __init__(
         self,
@@ -173,6 +181,7 @@ class LLMClient(Protocol):
         transport: Transport | None = None,
         clock: Clock | None = None,
         random: Any = _random_module,
+        metrics: "Metrics | None" = None,
     ) -> None:
         self._settings = settings
         self._transport: Transport = transport if transport is not None else OpenAIChatTransport()
@@ -188,6 +197,10 @@ class LLMClient(Protocol):
         # is never enabled implicitly. (Not a config variable — the LLM
         # configuration surface is closed per the spec.)
         self._log_prompts = os.environ.get("LLM_LOG_PROMPTS", "") == "1"
+        # Optional metrics sink (BON-34): the client only records a success
+        # or the final domain error per public call — it never formats
+        # metric names (that is ``spacedbro.metrics``' job).
+        self._metrics = metrics
 
     # --- Public contract ---------------------------------------------------
 
@@ -204,7 +217,12 @@ class LLMClient(Protocol):
         body = self._build_body(
             self._settings.model, wire_messages, response_format, temperature, max_tokens
         )
-        parsed = await self._attempt_with_retry(body)
+        try:
+            parsed = await self._attempt_with_retry(body)
+        except LLMError as exc:
+            self._record_llm_error(_KIND_TEXT, exc)
+            raise
+        self._record_llm_ok(_KIND_TEXT)
         return self._to_response(parsed, response_format)
 
     async def complete_with_vision(
@@ -238,8 +256,23 @@ class LLMClient(Protocol):
         body = self._build_body(
             self._settings.model, wire_messages, response_format, temperature, max_tokens
         )
-        parsed = await self._attempt_with_retry(body, vision=True)
+        try:
+            parsed = await self._attempt_with_retry(body, vision=True)
+        except LLMError as exc:
+            self._record_llm_error(_KIND_VISION, exc)
+            raise
+        self._record_llm_ok(_KIND_VISION)
         return self._to_response(parsed, response_format)
+
+    # --- Metrics (BON-34) ------------------------------------------------------
+
+    def _record_llm_ok(self, kind: str) -> None:
+        if self._metrics is not None:
+            self._metrics.record_llm_call(kind, ok=True)
+
+    def _record_llm_error(self, kind: str, exc: LLMError) -> None:
+        if self._metrics is not None:
+            self._metrics.record_llm_call(kind, ok=False, error=exc)
 
     # --- Retry loop -----------------------------------------------------------
 
@@ -631,11 +664,19 @@ def build_llm_client(
     clock: Clock | None = None,
     *,
     random: Any = _random_module,
+    metrics: "Metrics | None" = None,
 ) -> LLMClient:
     """Build the single LLM client for the resolved configuration.
 
     Constructed once by the entrypoint and injected into the bot/handlers.
     ``transport`` and ``clock`` are the test seams: every contract test
     injects a stub transport (and a frozen clock) — no network, no provider.
+    ``metrics`` is the optional BON-34 metrics sink (call counts).
     """
-    return LLMClient(settings=settings, transport=transport, clock=clock, random=random)
+    return LLMClient(
+        settings=settings,
+        transport=transport,
+        clock=clock,
+        random=random,
+        metrics=metrics,
+    )
