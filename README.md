@@ -139,6 +139,10 @@ spaced-bro/
 - [x] MVP scope defined (text + images; voice later)
 - [x] First OpenSpec change: `openspec/changes/mvp-core/`
   - proposal, design, tasks, and requirements for core domains
+- [x] MVP implemented (BON-27…BON-33): scaffold, data model, SRS engine,
+  LLM layer, add flow, review session, proactive scheduler
+- [ ] Polish & smoke verification (BON-34): metrics + `/metrics`, README,
+  end-to-end smoke checklist (`docs/smoke-checklist.md`)
 
 **Hand-off ready:** The `mvp-core` change is the specification package for engineers to estimate and implement.
 
@@ -220,14 +224,22 @@ only door to the LLM — handlers receive it by injection and never
 instantiate provider clients themselves), starts the in-process APScheduler
 and the health server, then begins Telegram long polling.
 
-**Smoke checklist** (per backend): text add → extraction returns candidates;
-photo add → vision extraction works (local: requires a vision-capable model);
-review cycle → `back` generation produces the short reply; proactive
-dry-run → with `SCHEDULER_DRY_RUN=1` and a due card, the log shows
-`proactive DRY-RUN: would nudge …` within one pass interval (no message is
-sent, nothing is counted). The INFO log line
-`LLM resolved configuration: APP_ENV=… provider=… model=… base_url=…`
-confirms which backend is active.
+**Smoke checklist** (per backend): the full end-to-end checklist — text
+add with **confirm-back**, **non-learning text**, **duplicate + boost**,
+**review session**, **proactive dry-run**, error paths, and the Definition
+of Done pre-flight (secrets env-only, key presence) — lives in
+[`docs/smoke-checklist.md`](docs/smoke-checklist.md). In short:
+
+1. Text add → extraction returns candidates → Add → confirm-back card →
+   Save (new SRS state in the DB).
+2. Non-learning text → short ack, no candidates, nothing saved.
+3. Duplicate add → "already know" + Boost offer, no second row; Boost
+   resets the card to New.
+4. `/review` → reports how many due, one card at a time, rating advances
+   the SRS state, on-demand never counts toward the proactive cap.
+5. Proactive dry-run → with `SCHEDULER_DRY_RUN=1` and a due card, the log
+   shows `proactive DRY-RUN: would nudge …` within one pass interval (no
+   message sent, nothing counted).
 
 ### Tests
 
@@ -241,14 +253,50 @@ uv run python -m pytest
 docker compose up --build
 ```
 
-This builds the image, applies migrations on startup, mounts the SQLite file at
-`/data/spacedbro.db` on a named volume (`spacedbro-data`), and exposes a
-HEALTHCHECK-backed `/healthz` on port 8080. Verify:
+This builds the image, applies **Alembic migrations on startup** (before any
+traffic — an explicit `alembic upgrade head` is also possible via
+`docker compose run bot alembic upgrade head` for manual migration runs),
+mounts the SQLite file at `/data/spacedbro.db` on a named volume
+(`spacedbro-data`), and exposes a HEALTHCHECK-backed `/healthz` on port 8080.
+Verify:
 
 ```bash
 curl http://localhost:8080/healthz   # {"status":"ok","database":"ok",...}
 docker compose ps                    # STATUS shows (healthy)
 ```
+
+**Pre-deploy key check (Definition of Done):** before deploying, confirm the
+keys are present out-of-band — `BOT_TOKEN` for every environment, and
+`OPENAI_API_KEY` whenever the resolved LLM provider is `openai`
+(the `preprod`/`production` default). With a required key missing, the
+container aborts at startup with **exit code 78** and an `ERROR` log naming
+the offending variable — a healthy green container therefore *proves* the
+keys were present. Secrets live only in the gitignored local `.env`
+(compose substitutes `${VAR}` from it) — never in the image, the repo, or
+compose files (see the pre-flight block in `docs/smoke-checklist.md`).
+
+### Observability (logs + metrics)
+
+- **Logs:** structured — every line after configuration is a **single-line
+  JSON object** on stderr: `{"ts": "...Z", "level": "INFO",
+  "logger": "spacedbro.scheduler", "message": "..."}` plus `exc_info`
+  (rendered traceback) when a record carries an exception. Log shippers can
+  parse each container-log line on its own; grep the `message` field and
+  `"level":"ERROR"`. Level via `LOG_LEVEL` (default `INFO`). Fail-fast
+  `ERROR` lines logged *before* configuration (e.g. the exit-78 config
+  error) use the plain format. The LLM router's startup line
+  `LLM resolved configuration: APP_ENV=… provider=… model=… base_url=…`
+  (INFO) confirms the active backend; per-LLM-call latency/tokens log at
+  DEBUG, and full prompts only with the explicit `LLM_LOG_PROMPTS=1` flag.
+  The proactive pass logs `proactive pass done: checked=… sent=…` (INFO)
+  and, in dry-run, `proactive DRY-RUN: would nudge …` (INFO).
+- **Metrics:** `GET /metrics` on the same port serves Prometheus text —
+  LLM call counts (`spacedbro_llm_calls_total{kind,outcome}`,
+  `spacedbro_llm_errors_total{kind,error}`) plus gauges
+  (`spacedbro_users_total`, `spacedbro_items_total`,
+  `spacedbro_items_due_total`, refreshed per scrape, best-effort). No
+  external exporter is needed for the MVP; scrape it with any Prometheus
+  `scrape_configs` entry if you want graphs.
 
 ### Proactive scheduling (operator note)
 
