@@ -465,6 +465,12 @@ async def handle_callback(
         await callback.answer("Already handled \U0001F44D")
         return
 
+    if callback.message is None:
+        # Stale callback — the message was deleted/expired, so there is
+        # nothing to reply to; stop the client spinner and move on.
+        await callback.answer()
+        return
+
     if action == cb.ACTION_LANG:
         await _handle_lang(callback, users, store, user, payload)
     elif action == cb.ACTION_ADD:
