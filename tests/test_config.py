@@ -47,12 +47,15 @@ def test_missing_bot_token_raises() -> None:
         load_settings(env)
 
 
-def test_missing_openai_key_raises() -> None:
+def test_missing_openai_key_is_not_required_here() -> None:
+    # The OPENAI_API_KEY requirement is provider-driven and lives in the LLM
+    # configuration layer (llm-router spec — "Provider-driven key check");
+    # this layer must not enforce it unconditionally.
     env = _env()
     env.pop("OPENAI_API_KEY")
 
-    with pytest.raises(ConfigError, match="OPENAI_API_KEY"):
-        load_settings(env)
+    settings = load_settings(env)
+    assert settings.openai_api_key == ""
 
 
 def test_blank_values_are_treated_as_missing() -> None:
