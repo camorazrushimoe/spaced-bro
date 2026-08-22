@@ -194,6 +194,22 @@ async def generate_back(
     return back
 
 
+def _image_mime(image_bytes: bytes) -> str:
+    """Content type for a photo's data URL, from the BYTES themselves.
+
+    Telegram delivers photos as PNG/WEBP (not necessarily JPEG), so a
+    hardcoded "photo.jpg" would mislabel them; magic-byte sniffing keeps
+    the data URL honest (media spec "Vision-based extraction").
+    """
+    if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if image_bytes.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/jpeg"  # Telegram's default photo format
+
+
 async def extract_from_image(
     client: LLMCaller,
     image_bytes: bytes,
@@ -209,9 +225,8 @@ async def extract_from_image(
     short message (design §9 "Unreadable image").
     """
     import base64
-    import mimetypes
 
-    mime = mimetypes.guess_type("photo.jpg")[0] or "image/jpeg"
+    mime = _image_mime(image_bytes)
     data_url = f"data:{mime};base64," + base64.b64encode(image_bytes).decode("ascii")
     response = await client.complete_with_vision(
         [

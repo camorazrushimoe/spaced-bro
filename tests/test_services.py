@@ -216,15 +216,25 @@ async def test_back_provider_failure_propagates() -> None:
 
 
 async def test_vision_candidates_and_data_url() -> None:
+    png = b"\x89PNG\r\n\x1a\n" + b"fake-png-payload"
     fake = FakeLLM(vision_structured={"candidates": [{"front": "STOP"}]})
     out = await extract_from_image(
-        fake, b"\x89PNG bytes", target_lang="en", native_lang="ru"
+        fake, png, target_lang="en", native_lang="ru"
     )
     assert [c.front for c in out] == ["STOP"]
     call = fake.calls[0]
-    assert call["vision_image_url"].startswith("data:image/"), call["vision_image_url"]
+    # The data URL must declare the ACTUAL content type of the bytes —
+    # Telegram photos are PNG/WEBP, and a hardcoded "photo.jpg" would
+    # mislabel them (media spec "Vision-based extraction").
+    assert call["vision_image_url"].startswith("data:image/png;"), call["vision_image_url"]
     # The raw bytes never leave the function (process-and-discard).
-    assert b"\x89PNG" not in call["vision_image_url"].encode("latin-1", "ignore") or True
+    assert b"fake-png-payload" not in call["vision_image_url"].encode("latin-1", "ignore")
+
+
+async def test_vision_jpeg_photo_gets_jpeg_content_type() -> None:
+    fake = FakeLLM(vision_structured={"candidates": []})
+    await extract_from_image(fake, b"\xff\xd8\xff jpeg", target_lang="en", native_lang="ru")
+    assert fake.calls[0]["vision_image_url"].startswith("data:image/jpeg;")
 
 
 async def test_vision_empty_means_unreadable_image() -> None:

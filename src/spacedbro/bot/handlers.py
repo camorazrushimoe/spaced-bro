@@ -6,7 +6,10 @@ Implements the user-facing loop of ``openspec/changes/mvp-core/design.md``:
   inline buttons, and callback idempotency via a unique ``callback_id``
   (a replayed id is a no-op).
 - §4 User profile: ``/start`` asks the target language **once**
-  (default ``en``); ``native_lang`` defaults to ``ru``.
+  (default ``en``); ``native_lang`` defaults to ``ru``. A first text
+  that is not a language answer is NOT swallowed — the question is
+  skipped (default held) and the word goes straight to extraction, so
+  the word /start invited is never lost.
 - §3 Intent & extraction: learning text → candidates + [Add] buttons;
   non-learning text → short ack + hint, **no candidates**.
 - §5 Add flow: candidate → duplicate check (notify + Boost, no second
@@ -74,10 +77,6 @@ WELCOME = (
 ONBOARDING_QUESTION = (
     "Quick one: which language are we learning?\n"
     "Reply with a name (en, de, es, fr, …)"
-)
-ONBOARDING_REASK = (
-    "That one's not a language I know 🤔\n"
-    "Reply with a code (en, de, es, fr, …) — or just say Skip."
 )
 ONBOARDING_DEFAULTED = (
     "No problem — going with <b>English</b> \U0001F1EC\U0001F1E7\n"
@@ -214,15 +213,22 @@ def _boost_markup(item_id: int) -> InlineKeyboardMarkup:
     )
 
 
-def _retry_add_markup(token: str) -> InlineKeyboardMarkup:
-    """Retry = re-run Add for the same candidate, fresh callback id."""
+def _retry_markup(action: str, payload: str) -> InlineKeyboardMarkup:
+    """[Try again | Skip] after a failure — the retry re-runs the same
+    action with a fresh callback id, bound to the same store reference.
+
+    For Add the payload is the candidate token; for Regenerate it is the
+    confirmation key, which the failed-regen path rotates so that the
+    [Save] of the card the user just rejected is dead (stale callbacks
+    get a short NOPE) while the retry stays bound to the same card.
+    """
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text=BTN_RETRY,
                     callback_data=cb.make_callback_data(
-                        cb.ACTION_ADD, token, cb.new_callback_id()
+                        action, payload, cb.new_callback_id()
                     ),
                 ),
                 InlineKeyboardButton(
@@ -403,12 +409,19 @@ async def handle_text(
     tg_id = message.from_user.id
     user, _ = _ensure_profile(users, clock, tg_id)
 
-    # Onboarding answer (asked once — never again, design §4). The
-    # pending flag is popped inside _answer_onboarding only when the
-    # question is resolved, so a re-ask still routes here.
+    # Onboarding answer (asked once — never again, design §4).
     if store.get(tg_id, "pending_lang"):
-        await _answer_onboarding(message, users, user, store, message.text)
-        return
+        code = _parse_lang_code(message.text)
+        if code is not None:
+            users.set_target_lang(user.id, code)
+            store.pop(tg_id, "pending_lang")
+            await message.answer(LANG_CONFIRM.format(target=_esc(code)))
+            return
+        # Not a language answer: the question is skipped (the default
+        # ``en`` holds) and THIS message is treated as normal text — the
+        # word /start invited is never lost (telegram-bot "Start
+        # command": ask once AND invite the first word/photo).
+        store.pop(tg_id, "pending_lang")
 
     try:
         candidates = await extract_candidates(
@@ -548,40 +561,6 @@ async def handle_callback(
 # --- Action implementations -------------------------------------------------------
 
 
-async def _answer_onboarding(
-    message: types.Message,
-    users: UserRepository,
-    user: User,
-    store: ContextStore,
-    reply_text: str,
-) -> None:
-    """Resolve the once-only target-language question (design §4).
-
-    A known language (code or name) sets it; an unrecognisable answer
-    (``cat`` — a word to learn, not a language) gets ONE short re-ask,
-    after which the default ``en`` applies ("default English if skipped").
-    The question is never asked more than twice in total.
-    """
-    reasked = store.get(message.from_user.id, "onboard_reasked")
-    code = _parse_lang_code(reply_text)
-    if code is not None:
-        users.set_target_lang(user.id, code)
-        store.pop(message.from_user.id, "pending_lang")
-        store.pop(message.from_user.id, "onboard_reasked")
-        await message.answer(LANG_CONFIRM.format(target=_esc(code)))
-        return
-    if not reasked:
-        # Keep "pending_lang" set: the next text message is still the
-        # answer (the question was not yet resolved).
-        store.set(message.from_user.id, "onboard_reasked", True)
-        await message.answer(ONBOARDING_REASK)
-        return
-    users.set_target_lang(user.id, "en")
-    store.pop(message.from_user.id, "pending_lang")
-    store.pop(message.from_user.id, "onboard_reasked")
-    await message.answer(ONBOARDING_DEFAULTED)
-
-
 async def _handle_lang(
     callback: types.CallbackQuery,
     users: UserRepository,
@@ -640,7 +619,9 @@ async def _handle_add(
     except LLMError as exc:
         # design §9: short retry message; nothing is saved.
         logger.warning("back generation failed for %r: %s", front, exc.detail)
-        await callback.message.answer(BACK_FAILED, reply_markup=_retry_add_markup(token))
+        await callback.message.answer(
+            BACK_FAILED, reply_markup=_retry_markup(cb.ACTION_ADD, token)
+        )
         await callback.answer()
         return
 
@@ -746,8 +727,25 @@ async def _handle_regen(
             native_lang=user.native_lang,
         )
     except LLMError as exc:
+        # design §9: short error + retry. The confirmation key is
+        # ROTATED, so the [Save] of the card the user just rejected is
+        # dead (stale callbacks get a short NOPE) while the retry below
+        # stays bound to the same card.
         logger.warning("back regeneration failed for %r: %s", front, exc.detail)
-        await callback.message.answer(_friendly_llm_error(exc))
+        retry_key = cb.new_token()
+        store.set(
+            tg_id,
+            "confirm",
+            Confirmation(
+                front=front,
+                back=confirm.back,
+                context=confirm.context,
+                key=retry_key,
+            ),
+        )
+        await callback.message.answer(
+            _friendly_llm_error(exc), reply_markup=_retry_markup(cb.ACTION_REGEN, retry_key)
+        )
         await callback.answer()
         return
 

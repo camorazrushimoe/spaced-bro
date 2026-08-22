@@ -31,9 +31,7 @@ from spacedbro.bot.handlers import (
     SAVED,
     BOOST_APPLIED,
     DUPLICATE_LINE,
-    ONBOARDING_DEFAULTED,
     ONBOARDING_QUESTION,
-    ONBOARDING_REASK,
     SKIPPED,
     VOICE_REPLY,
     handle_callback,
@@ -183,41 +181,71 @@ async def test_onboarding_text_answer_sets_target_lang(session, fake_llm, record
     assert all(ONBOARDING_QUESTION not in s["text"] for s in record_answers["sent"])
 
 
-async def test_onboarding_unparseable_reasks_once_then_defaults_english(
+async def test_onboarding_unparseable_text_is_not_swallowed(
     session, fake_llm, record_answers
 ):
-    """Non-language text → one short re-ask, then default en (design §4:
-    the question is asked once; 'default English if skipped')."""
+    """An unrecognisable text is a word to learn, not a failed language
+    answer: no re-ask trap — the question is skipped (default ``en``
+    held) and the text is processed normally (design §4 + telegram-bot
+    "Start command": invite the first word)."""
     deps = make_deps(session, fake_llm)
     await handle_start(make_message(text="/start"), **deps)
+    fake_llm.extracts.append([{"front": "hmm"}])
     await handle_text(make_message(text="hmm not sure", message_id=2), **deps)
 
-    # First unrecognisable answer: re-asked, not defaulted, not a language.
-    assert ONBOARDING_REASK in record_answers["sent"][-1]["text"]
-    assert get_user(session).target_lang == "en"  # default held until answered
-
-    # Second unrecognisable answer: default en, question over.
-    record_answers["sent"].clear()
-    await handle_text(make_message(text="whatever else", message_id=3), **deps)
-    assert get_user(session).target_lang == "en"
-    assert any(ONBOARDING_DEFAULTED in t["text"] for t in record_answers["sent"])
-    assert all(ONBOARDING_REASK not in t["text"] for t in record_answers["sent"])
+    assert get_user(session).target_lang == "en"  # default held
+    sent = record_answers["sent"]
+    assert sent[-1]["text"].startswith("Here's what I found")  # processed
 
 
 async def test_onboarding_word_to_learn_not_misfiled_as_language(
     session, fake_llm, record_answers
 ):
-    """A word that merely looks like a code ('cat') is not a language
-    answer — the user keeps the chance to answer, then a real code lands."""
+    """A word that merely looks like a code (``cat``) is not a language
+    answer: the target stays ``en`` (not ``cat``) AND the word is not
+    lost — it goes straight to extraction."""
     deps = make_deps(session, fake_llm)
     await handle_start(make_message(text="/start"), **deps)
+    fake_llm.extracts.append([{"front": "cat"}])
     await handle_text(make_message(text="cat", message_id=2), **deps)
-    assert get_user(session).target_lang == "en"  # not 'cat'
-    assert ONBOARDING_REASK in record_answers["sent"][-1]["text"]
 
+    assert get_user(session).target_lang == "en"  # not 'cat'
+    sent = record_answers["sent"]
+    assert sent[-1]["text"].startswith("Here's what I found")
+    buttons = [b.text for row in sent[-1]["markup"].inline_keyboard for b in row]
+    assert buttons == ["Add", "Skip"]
+
+
+async def test_onboarding_invited_first_word_not_swallowed(
+    session, fake_llm, record_answers
+):
+    """telegram-bot "Start command": /start "invites the first word or
+    photo". A non-language first text (the very word the user was invited
+    to send) must NOT be swallowed as a failed language answer — the
+    question is skipped and the word goes through extraction."""
+    deps = make_deps(session, fake_llm)
+    await handle_start(make_message(text="/start"), **deps)
+    fake_llm.extracts.append([{"front": "apple"}])
+    await handle_text(make_message(text="apple", message_id=2), **deps)
+
+    assert get_user(session).target_lang == "en"  # default held
+    sent = record_answers["sent"]
+    assert sent[-1]["text"].startswith("Here's what I found")  # word extracted
+
+
+async def test_onboarding_skipped_then_word_extracted(session, fake_llm, record_answers):
+    """Skipping the language question must not eat the next word: a text
+    right after [Skip] goes straight through extraction."""
+    deps = make_deps(session, fake_llm)
+    await handle_start(make_message(text="/start"), **deps)
+    await _press(deps, _button(record_answers["sent"][-1]["markup"], "Skip"), record_answers)
+
+    fake_llm.extracts.append([{"front": "banana"}])
     record_answers["sent"].clear()
-    await handle_text(make_message(text="de", message_id=3), **deps)
-    assert get_user(session).target_lang == "de"
+    await handle_text(make_message(text="banana", message_id=3), **deps)
+
+    assert get_user(session).target_lang == "en"
+    assert record_answers["sent"][-1]["text"].startswith("Here's what I found")
 
 
 async def test_onboarding_language_name_maps_to_code(
@@ -613,6 +641,49 @@ async def test_boost_replay_is_no_op(session, fake_llm, record_answers):
 
 
 # --- Back LLM failure (design §9, learning-items "Back LLM failure") ----------------
+
+
+async def test_regen_failure_offers_retry_and_invalidates_old_save(
+    session, fake_llm, record_answers
+):
+    """learning-items "Back LLM failure": after a FAILED regenerate the user
+    must still be able to retry — and the [Save] of the confirmation the
+    user explicitly rejected must not persist that rejected ``back``."""
+    deps = make_deps(session, fake_llm)
+    await _start_onboarded(deps, record_answers)
+    fake_llm.texts.append("bad back")
+    await _add_candidate(deps, record_answers, "pear")
+    confirm = record_answers["sent"][-1]  # the confirmation the user rejects
+    fake_llm.back_errors.append(TimeoutError("deadline"))  # hits the regen call
+
+    replies = await _press(
+        deps, _button(confirm["markup"], "Wrong — regenerate"), record_answers
+    )
+
+    # Short error + retry offered (not a dead end).
+    assert "service is slow" in replies[-1]["text"]
+    buttons = [b.text for row in replies[-1]["markup"].inline_keyboard for b in row]
+    assert "Try again" in buttons and "Skip" in buttons
+
+    # The old [Save] from the REJECTED confirmation must not persist it.
+    old_save = _button(confirm["markup"], "Save")
+    record_answers["sent"].clear()
+    await handle_callback(
+        make_callback(data=old_save.callback_data, message=make_message(message_id=920)),
+        **deps,
+    )
+    assert get_items(session) == []  # nothing saved, no partial card
+    assert "Nothing to do here" in record_answers["sent"][-1]["text"]
+
+    # Retry works: fresh back → new confirmation → Save persists the NEW back.
+    fake_llm.texts.append("хороший back")
+    replies = await _press(
+        deps, _button(replies[-1]["markup"], "Try again"), record_answers
+    )
+    assert "хороший back" in replies[-1]["text"]
+    await _press(deps, _button(replies[-1]["markup"], "Save"), record_answers)
+    assert len(get_items(session)) == 1
+    assert get_items(session)[0].back == "хороший back"
 
 
 async def test_back_failure_short_error_no_save_with_retry(session, fake_llm, record_answers):
