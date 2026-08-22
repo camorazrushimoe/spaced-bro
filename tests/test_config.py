@@ -61,3 +61,45 @@ def test_missing_openai_key_is_not_required_here() -> None:
 def test_blank_values_are_treated_as_missing() -> None:
     with pytest.raises(ConfigError):
         load_settings(_env(BOT_TOKEN="   "))
+
+
+# --- Scheduler (BON-33, design §8) ---------------------------------------------
+
+
+def test_scheduler_settings_defaults() -> None:
+    settings = load_settings(_env())
+
+    assert settings.scheduler_interval_minutes == 5
+    assert settings.scheduler_dry_run is False
+
+
+def test_scheduler_interval_minutes_from_env() -> None:
+    settings = load_settings(_env(SCHEDULER_INTERVAL_MINUTES="30"))
+
+    assert settings.scheduler_interval_minutes == 30
+
+
+@pytest.mark.parametrize("raw", ["0", "-1", "abc", "5.5"])
+def test_scheduler_interval_minutes_invalid_raises(raw: str) -> None:
+    with pytest.raises(ConfigError, match="SCHEDULER_INTERVAL_MINUTES"):
+        load_settings(_env(SCHEDULER_INTERVAL_MINUTES=raw))
+
+
+@pytest.mark.parametrize("raw", ["1", "true", "TRUE", "yes", "on"])
+def test_scheduler_dry_run_truthy(raw: str) -> None:
+    settings = load_settings(_env(SCHEDULER_DRY_RUN=raw))
+
+    assert settings.scheduler_dry_run is True
+
+
+@pytest.mark.parametrize("raw", ["0", "false", "no", "off", ""])
+def test_scheduler_dry_run_falsy(raw: str) -> None:
+    settings = load_settings(_env(SCHEDULER_DRY_RUN=raw))
+
+    assert settings.scheduler_dry_run is False
+
+
+def test_scheduler_dry_run_garbage_raises() -> None:
+    # A typo'd flag must not silently flip the mode (live vs dry run).
+    with pytest.raises(ConfigError, match="SCHEDULER_DRY_RUN"):
+        load_settings(_env(SCHEDULER_DRY_RUN="tru"))

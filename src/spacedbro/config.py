@@ -16,6 +16,14 @@ DEFAULT_DATABASE_URL = "sqlite:////data/spacedbro.db"
 DEFAULT_HEALTH_HOST = "0.0.0.0"
 DEFAULT_HEALTH_PORT = 8080
 DEFAULT_LOG_LEVEL = "INFO"
+#: Proactive pass interval in minutes (design §8 "job every N minutes").
+DEFAULT_SCHEDULER_INTERVAL_MINUTES = 5
+#: Proactive verification mode (design §8 smoke "proactive dry-run"): the
+#: pass runs, nothing is sent or counted.
+DEFAULT_SCHEDULER_DRY_RUN = False
+
+#: SCHEDULER_DRY_RUN truthy values (case-insensitive).
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
 
 
 class ConfigError(RuntimeError):
@@ -30,6 +38,10 @@ class Settings:
     health_host: str = DEFAULT_HEALTH_HOST
     health_port: int = DEFAULT_HEALTH_PORT
     log_level: str = DEFAULT_LOG_LEVEL
+    #: Scheduler (BON-33, design §8): proactive tick every N minutes.
+    scheduler_interval_minutes: int = DEFAULT_SCHEDULER_INTERVAL_MINUTES
+    #: Scheduler (BON-33): dry-run mode — the pass runs, nothing is sent.
+    scheduler_dry_run: bool = DEFAULT_SCHEDULER_DRY_RUN
 
 
 def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
@@ -52,6 +64,14 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
     health_port = int(env.get("HEALTH_PORT", DEFAULT_HEALTH_PORT))
     log_level = env.get("LOG_LEVEL", DEFAULT_LOG_LEVEL).strip().upper() or DEFAULT_LOG_LEVEL
 
+    scheduler_interval_minutes = _parse_scheduler_interval(
+        env.get("SCHEDULER_INTERVAL_MINUTES", ""),
+        "SCHEDULER_INTERVAL_MINUTES",
+    )
+    scheduler_dry_run = _parse_scheduler_dry_run(
+        env.get("SCHEDULER_DRY_RUN", "")
+    )
+
     return Settings(
         bot_token=bot_token,
         openai_api_key=openai_api_key,
@@ -59,4 +79,42 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
         health_host=health_host,
         health_port=health_port,
         log_level=log_level,
+        scheduler_interval_minutes=scheduler_interval_minutes,
+        scheduler_dry_run=scheduler_dry_run,
+    )
+
+
+def _parse_scheduler_interval(raw: str, variable: str) -> int:
+    """``SCHEDULER_INTERVAL_MINUTES`` — positive integer, default 5."""
+    raw = raw.strip()
+    if not raw:
+        return DEFAULT_SCHEDULER_INTERVAL_MINUTES
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ConfigError(
+            f"{variable} must be a positive integer (e.g. 5), got {raw!r}"
+        ) from None
+    if value <= 0:
+        raise ConfigError(
+            f"{variable} must be a positive integer (e.g. 5), got {raw!r}"
+        )
+    return value
+
+
+def _parse_scheduler_dry_run(raw: str) -> bool:
+    """``SCHEDULER_DRY_RUN`` — 1/true/yes/on (case-insensitive) enable dry
+    run; anything else (including empty/0/false) leaves it off. A garbage
+    value is a configuration error: an operator who typo'd the flag wants
+    to know, not to silently run live."""
+    raw = raw.strip().lower()
+    if not raw:
+        return DEFAULT_SCHEDULER_DRY_RUN
+    if raw in _TRUTHY:
+        return True
+    if raw in frozenset({"0", "false", "no", "off"}):
+        return False
+    raise ConfigError(
+        f"SCHEDULER_DRY_RUN must be one of 1/true/yes/on/0/false/no/off, "
+        f"got {raw!r}"
     )

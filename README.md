@@ -185,7 +185,10 @@ independently — `LLM_PROVIDER`, `LLM_MODEL`, `LLM_BASE_URL`, `OPENAI_API_KEY`,
 | `production` | `openai` | `https://api.openai.com/v1` | `gpt-5.6-luna` | `OPENAI_API_KEY` (required) |
 
 Optional: `DATABASE_URL` (defaults to `sqlite:////data/spacedbro.db`),
-`HEALTH_HOST`, `HEALTH_PORT`, `LOG_LEVEL`.
+`HEALTH_HOST`, `HEALTH_PORT`, `LOG_LEVEL`, and the proactive scheduler
+`SCHEDULER_INTERVAL_MINUTES` (default 5 — "job every N minutes", design §8)
+and `SCHEDULER_DRY_RUN` (default off — the pass runs and logs, nothing is
+sent; the smoke checklist's "proactive dry-run").
 
 ### Local LLM: Gemma 4 via Ollama
 
@@ -219,7 +222,10 @@ and the health server, then begins Telegram long polling.
 
 **Smoke checklist** (per backend): text add → extraction returns candidates;
 photo add → vision extraction works (local: requires a vision-capable model);
-review cycle → `back` generation produces the short reply. The INFO log line
+review cycle → `back` generation produces the short reply; proactive
+dry-run → with `SCHEDULER_DRY_RUN=1` and a due card, the log shows
+`proactive DRY-RUN: would nudge …` within one pass interval (no message is
+sent, nothing is counted). The INFO log line
 `LLM resolved configuration: APP_ENV=… provider=… model=… base_url=…`
 confirms which backend is active.
 
@@ -246,4 +252,28 @@ docker compose ps                    # STATUS shows (healthy)
 
 **Single-instance note:** MVP assumes one bot process (in-process APScheduler,
 no distributed lock). Run only one replica of the `bot` service.
+
+### Proactive scheduling (operator note)
+
+The bot runs an **in-process APScheduler** (same process, same event loop)
+that, every `SCHEDULER_INTERVAL_MINUTES` (default 5), nudges users who have
+cards due — one nudge per user per pass, reporting how many cards are due
+and pointing to `/review`. Per-user rules (design §8, `scheduler` spec):
+
+- **Daily cap 1–3 per UTC day** (day = UTC calendar date, reset at UTC
+  midnight), scaled by activity: 0 messages in the last 7 days → 1;
+  ≥3 distinct UTC hours active → 3; else 2.
+- **On-demand reviews never count** toward the cap — only proactive sends do.
+- **Cold start** (no activity histogram): proactive only 09:00–21:00 UTC.
+- **Back-off**: no activity for 14 days → proactive skipped for that user.
+- Proactive and on-demand **share the same due queue**: a nudge does not
+  consume it — unattended cards stay due for `/review`, no penalty.
+
+**⚠️ Single-instance assumption — no distributed lock in MVP.** The
+scheduler lives inside the bot process and coordinates nothing across
+processes: running two `bot` replicas would **double proactive sends and
+corrupt the daily counters**. Operate exactly **one** replica
+(`restart: unless-stopped` is fine; scaling out is not). The documented
+upgrade path is Postgres/Redis + a distributed lock (design §10) — out of
+MVP scope.
 

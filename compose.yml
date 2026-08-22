@@ -15,6 +15,11 @@ services:
       LLM_MODEL: ${LLM_MODEL}
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-30}
       LLM_MAX_RETRIES: ${LLM_MAX_RETRIES:-2}
+      # Proactive scheduler (BON-33, design §8): pass interval in minutes
+      # (default 5) and dry-run mode (default off — the pass runs, nothing
+      # is sent; use for the smoke checklist's "proactive dry-run").
+      SCHEDULER_INTERVAL_MINUTES: ${SCHEDULER_INTERVAL_MINUTES:-}
+      SCHEDULER_DRY_RUN: ${SCHEDULER_DRY_RUN:-}
       # SQLite lives on the named volume at /data.
       DATABASE_URL: sqlite:////data/spacedbro.db
       HEALTH_HOST: 0.0.0.0
